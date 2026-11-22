@@ -195,6 +195,9 @@ function problemPrompt(isAm, catIdx) {
     : `${category} — select or describe the problem:`;
 }
 
+// Any "Other / ሌላ" option asks for typed text instead of saving the label itself.
+const isOtherOption = label => /other|ሌላ/i.test(String(label || ''));
+
 function locationKeyboard(isAm) {
   // Short labels (Ward 1, OPD 30) fit three per row; long office names take two.
   const rows = [];
@@ -619,7 +622,11 @@ bot.action(/^cat:(\d+)$/, async ctx => {
   setSession(ctx.from.id, s);
   await ctx.answerCbQuery();
   const isAm = langOf(u) === 'am';
-  return ctx.reply(isAm ? 'የመሣሪያውን ሞዴል ይምረጡ (ወይም ይጻፉ)፦' : 'Select device / model (or type it):', modelKeyboard(catIdx, isAm));
+  // "Other electronics" cannot stay a label: ask what the device actually is, and keep the model list usable.
+  const prompt = isOtherOption(CATEGORIES_EN[catIdx])
+    ? (isAm ? 'የመሣሪያውን ዓይነት ይጻፉ (ምሳሌ፦ ፕሮጀክተር) ወይም ከዚህ ይምረጡ፦' : 'Type the device (example: projector), or pick one below:')
+    : (isAm ? 'የመሣሪያውን ሞዴል ይምረጡ (ወይም ይጻፉ)፦' : 'Select device / model (or type it):');
+  return ctx.reply(prompt, modelKeyboard(catIdx, isAm));
 });
 bot.action(/^repmodel:(\d+):(\d+)$/, async ctx => {
   const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id);
@@ -633,6 +640,10 @@ bot.action(/^repmodel:(\d+):(\d+)$/, async ctx => {
   if (catIdx !== sessionCat || !models[modelIdx]) {
     await ctx.answerCbQuery();
     return ctx.reply(isAm ? 'የመሣሪያውን ሞዴል ይምረጡ (ወይም ይጻፉ)፦' : 'Select device / model (or type it):', modelKeyboard(sessionCat, isAm));
+  }
+  if (isOtherOption(models[modelIdx])) {
+    await ctx.answerCbQuery();
+    return ctx.reply(isAm ? 'የመሣሪያውን ሞዴል ይጻፉ (ምሳሌ፦ HP ProDesk 400 G6)፦' : 'Type the device model (example: HP ProDesk 400 G6):');
   }
   s.data.model = models[modelIdx];
   s.data.equipment_name = s.data.equipment_type;
@@ -655,6 +666,10 @@ bot.action(/^repprob:(\d+):(\d+)$/, async ctx => {
   if (catIdx !== sessionCat || !prob) {
     await ctx.answerCbQuery();
     return ctx.reply(problemPrompt(isAm, sessionCat), problemKeyboard(isAm, sessionCat));
+  }
+  if (isOtherOption(prob.en)) {
+    await ctx.answerCbQuery();
+    return ctx.reply(isAm ? 'ችግሩን በራስዎ ቃላት ይግለጹ፦' : 'Describe the problem in your own words:');
   }
   s.data.problem = isAm ? prob.am : prob.en;
   s.step = 'location';
