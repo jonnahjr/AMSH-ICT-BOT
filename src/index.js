@@ -742,8 +742,33 @@ bot.catch((err,ctx)=>{ console.error('Bot error:',err); if(ctx) ctx.reply('An er
       { command: 'myid',       description: '🆔 Show your Telegram ID' },
       { command: 'help',       description: '📋 Show all commands / ሁሉም ትዕዛዞች' },
     ]);
-    await bot.launch();
-    console.log('Amanuel Hospital IT Support Bot is running.');
+
+    // ── Launch mode ─────────────────────────────────────────────────────────
+    // Use webhook on Railway / any cloud that sets WEBHOOK_DOMAIN or RAILWAY_PUBLIC_DOMAIN.
+    // Fall back to long-polling for local dev (no env variable set).
+    const webhookDomain =
+      process.env.WEBHOOK_DOMAIN ||
+      (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null);
+
+    if (webhookDomain) {
+      // Webhook mode: Telegram pushes updates — eliminates 409 conflicts entirely.
+      const webhookPort = Number(process.env.PORT) || 8080;
+      const webhookPath = `/tg-webhook-${process.env.BOT_TOKEN.slice(-10)}`;
+      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+      await bot.launch({
+        webhook: {
+          domain: webhookDomain,
+          path: webhookPath,
+          port: webhookPort,
+        },
+      });
+      console.log(`Bot running in WEBHOOK mode → ${webhookDomain}${webhookPath} :${webhookPort}`);
+    } else {
+      // Long-polling mode (local development).
+      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+      await bot.launch({ dropPendingUpdates: true });
+      console.log('Bot running in POLLING mode (local dev).');
+    }
   }
   catch(err) { console.error('Startup failed:',err); process.exit(1); }
 })();
