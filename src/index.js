@@ -14,6 +14,107 @@ const uploadDir = path.resolve(process.env.UPLOAD_DIR || './storage/uploads');
 const reportDir = path.resolve(process.env.REPORT_DIR || './storage/reports');
 fs.mkdirSync(uploadDir, { recursive: true }); fs.mkdirSync(reportDir, { recursive: true });
 const CATEGORIES = ['Desktop computer','Laptop','Printer','Scanner','UPS','CCTV','Network equipment','Other electronics'];
+const CATEGORIES_AM = ['🖥️ ዴስክቶፕ ኮምፒውተር','💻 ላፕቶፕ','🖨️ ፕሪንተር','📠 ስካነር','🔋 UPS / ኃይል','📹 CCTV ካሜራ','🌐 የኔትወርክ መሣሪያ','🔌 ሌሎች ኤሌክትሮኒክስ'];
+const CATEGORIES_EN = ['🖥️ Desktop computer','💻 Laptop','🖨️ Printer','📠 Scanner','🔋 UPS / Power','📹 CCTV Camera','🌐 Network equipment','🔌 Other electronics'];
+
+const DEVICE_MODELS = {
+  0: ['HP ProDesk / EliteDesk','Dell OptiPlex','Lenovo ThinkCentre','Acer Veriton','Custom / Assembled PC','Other Desktop / ሌላ'],
+  1: ['HP EliteBook / ProBook','Dell Latitude','Lenovo ThinkPad','Toshiba / Dynabook','Apple MacBook','Other Laptop / ሌላ'],
+  2: ['HP LaserJet','Canon imageCLASS / LBP','Epson EcoTank','Brother Printer','Barcode / Label Printer','Other Printer / ሌላ'],
+  3: ['HP ScanJet','Canon CanoScan / DR','Epson WorkForce','Fujitsu fi-Series','Other Scanner / ሌላ'],
+  4: ['APC Smart-UPS / Back-UPS','Eaton UPS','Mercury UPS','Legrand / Kstar','Other UPS / ሌላ'],
+  5: ['Hikvision Camera / NVR','Dahua Camera / DVR','Uniview (UNV)','CCTV Monitor / Power','Other CCTV / ሌላ'],
+  6: ['Cisco Switch / Router','TP-Link Wi-Fi / AP','D-Link Switch','Wall Socket / Patch Cable','Other Network / ሌላ'],
+  7: ['Projector / ፕሮጀክተር','Photocopier / ፎቶኮፒ','TV Screen / ማሳያ','Sound System / ድምጽ','Other Device / ሌላ']
+};
+
+const COMMON_PROBLEMS = [
+  { en: "🔴 Won't power on", am: '🔴 አይበራም' },
+  { en: '🖥️ No display / Black screen', am: '🖥️ ምስል አያሳይም' },
+  { en: '🔵 Windows error / Crash', am: '🔵 የዊንዶውስ ስህተት' },
+  { en: '🐢 Very slow / Freezing', am: '🐢 በጣም ይዘገያል' },
+  { en: '🌐 No Internet / Network drop', am: '🌐 ኔትወርክ የለም' },
+  { en: '📄 Paper jam / Print error', am: '📄 ወረቀት ይይዛል' },
+  { en: '🔊 Strange noise / Overheating', am: '🔊 ያልተለመደ ድምፅ' },
+  { en: '⚡ Battery / Power failure', am: '⚡ ኃይል አይይዝም' },
+  { en: '❓ Other issue', am: '❓ ሌላ ችግር' }
+];
+
+const HOSPITAL_LOCATIONS = [
+  { en: '🏥 OPD / Clinics', am: '🏥 የተመላላሽ (OPD)' },
+  { en: '🛏️ Inpatient Ward', am: '🛏️ የተኝቶ ህክምና ክፍል' },
+  { en: '💊 Pharmacy', am: '💊 ፋርማሲ' },
+  { en: '🔬 Laboratory', am: '🔬 ላብራቶሪ' },
+  { en: '📁 Card Office / Archive', am: '📁 ካርድ ክፍል' },
+  { en: '💼 Admin / Finance / HR', am: '💼 አስተዳደር / ፋይናንስ' },
+  { en: '🚨 Emergency', am: '🚨 ድንገተኛ ክፍል' },
+  { en: '📍 Other Location', am: '📍 ሌላ የሥራ ቦታ' }
+];
+
+function categoryKeyboard(isAm) {
+  const labels = isAm ? CATEGORIES_AM : CATEGORIES_EN;
+  const rows = [];
+  for (let i = 0; i < labels.length; i += 2) {
+    const row = [Markup.button.callback(labels[i], `cat:${i}`)];
+    if (labels[i + 1]) row.push(Markup.button.callback(labels[i + 1], `cat:${i + 1}`));
+    rows.push(row);
+  }
+  return Markup.inlineKeyboard(rows);
+}
+
+function modelKeyboard(catIdx, isAm) {
+  const models = DEVICE_MODELS[catIdx] || DEVICE_MODELS[7];
+  const rows = [];
+  for (let i = 0; i < models.length; i += 2) {
+    const row = [Markup.button.callback(models[i], `repmodel:${catIdx}:${i}`)];
+    if (models[i + 1]) row.push(Markup.button.callback(models[i + 1], `repmodel:${catIdx}:${i + 1}`));
+    rows.push(row);
+  }
+  return Markup.inlineKeyboard(rows);
+}
+
+function problemKeyboard(isAm) {
+  const rows = [];
+  for (let i = 0; i < COMMON_PROBLEMS.length; i += 2) {
+    const p1 = COMMON_PROBLEMS[i];
+    const row = [Markup.button.callback(isAm ? p1.am : p1.en, `repprob:${i}`)];
+    if (COMMON_PROBLEMS[i + 1]) {
+      const p2 = COMMON_PROBLEMS[i + 1];
+      row.push(Markup.button.callback(isAm ? p2.am : p2.en, `repprob:${i + 1}`));
+    }
+    rows.push(row);
+  }
+  return Markup.inlineKeyboard(rows);
+}
+
+function locationKeyboard(isAm) {
+  const rows = [];
+  for (let i = 0; i < HOSPITAL_LOCATIONS.length; i += 2) {
+    const l1 = HOSPITAL_LOCATIONS[i];
+    const row = [Markup.button.callback(isAm ? l1.am : l1.en, `reploc:${i}`)];
+    if (HOSPITAL_LOCATIONS[i + 1]) {
+      const l2 = HOSPITAL_LOCATIONS[i + 1];
+      row.push(Markup.button.callback(isAm ? l2.am : l2.en, `reploc:${i + 1}`));
+    }
+    rows.push(row);
+  }
+  return Markup.inlineKeyboard(rows);
+}
+
+function priorityKeyboard(isAm) {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback(isAm ? '🟢 ዝቅተኛ / Low' : '🟢 Low', 'priority:low'),
+     Markup.button.callback(isAm ? '🟡 መካከለኛ / Med' : '🟡 Medium', 'priority:medium')],
+    [Markup.button.callback(isAm ? '🟠 ከፍተኛ / High' : '🟠 High', 'priority:high'),
+     Markup.button.callback(isAm ? '🔴 አስቸኳይ / Crit' : '🔴 Critical', 'priority:critical')]
+  ]);
+}
+
+function photoKeyboard(isAm) {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback(isAm ? '⏭️ ፎቶ ዝለል / Skip Photo' : '⏭️ Skip Photo', 'repphoto:skip')]
+  ]);
+}
 const PRIORITIES = ['low','medium','high','critical'];
 const STATUS_LABEL = { pending:'Pending', assigned:'Assigned', accepted:'Accepted', in_progress:'In progress', waiting_parts:'Waiting for parts', completed:'Completed', unresolved:'Unresolved', cancelled:'Cancelled' };
 const getSession = id => sessions.get(id) || {};
@@ -168,12 +269,75 @@ bot.action('main:lang', async ctx => { await ctx.answerCbQuery(); return ctx.rep
 bot.action('main:report', async ctx => {
   const u=await userByTelegram(ctx.from.id); await ctx.answerCbQuery(); if(!u) return ctx.reply('Send /start first.');
   setSession(ctx.from.id,{flow:'report',step:'category',data:{}});
-  const amCategories=['ዴስክቶፕ ኮምፒውተር','ላፕቶፕ','ፕሪንተር','ስካነር','UPS','CCTV','የኔትወርክ መሣሪያ','ሌሎች ኤሌክትሮኒክስ']; const rows=CATEGORIES.map((c,i)=>[Markup.button.callback(langOf(u)==='am'?amCategories[i]:c,`cat:${i}`)]);
-  return ctx.reply(msg(u,'askCategory'),Markup.inlineKeyboard(rows));
+  const isAm = langOf(u) === 'am';
+  return ctx.reply(isAm ? 'የመሣሪያውን ዓይነት ይምረጡ፦' : 'Select equipment category:', categoryKeyboard(isAm));
 });
 bot.action(/^cat:(\d+)$/, async ctx => {
-  const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id); if(s.flow!=='report'||s.step!=='category') return ctx.answerCbQuery('Start a new report first.');
-  s.data.equipment_type=CATEGORIES[Number(ctx.match[1])] || 'Other electronics'; s.step='name'; setSession(ctx.from.id,s); await ctx.answerCbQuery(); return ctx.reply(msg(u,'askName'));
+  const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id); if(s.flow!=='report') return ctx.answerCbQuery('Start a new report first.');
+  const catIdx = Number(ctx.match[1]);
+  s.data.equipment_type = CATEGORIES[catIdx] || 'Other electronics';
+  s.data.catIdx = catIdx;
+  s.step = 'model';
+  setSession(ctx.from.id, s);
+  await ctx.answerCbQuery();
+  const isAm = langOf(u) === 'am';
+  return ctx.reply(isAm ? 'የመሣሪያውን ሞዴል ይምረጡ (ወይም ይጻፉ)፦' : 'Select device / model (or type it):', modelKeyboard(catIdx, isAm));
+});
+bot.action(/^repmodel:(\d+):(\d+)$/, async ctx => {
+  const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id); if(s.flow!=='report') return ctx.answerCbQuery();
+  const catIdx = Number(ctx.match[1]);
+  const modelIdx = Number(ctx.match[2]);
+  const models = DEVICE_MODELS[catIdx] || DEVICE_MODELS[7];
+  s.data.model = models[modelIdx] || 'Standard';
+  s.data.equipment_name = s.data.equipment_type;
+  s.data.serial_number = '-';
+  s.step = 'problem';
+  setSession(ctx.from.id, s);
+  await ctx.answerCbQuery();
+  const isAm = langOf(u) === 'am';
+  return ctx.reply(isAm ? 'የብልሽቱን ዓይነት ይምረጡ (ወይም ይጻፉ)፦' : 'Select or describe the problem:', problemKeyboard(isAm));
+});
+bot.action(/^repprob:(\d+)$/, async ctx => {
+  const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id); if(s.flow!=='report') return ctx.answerCbQuery();
+  const probIdx = Number(ctx.match[1]);
+  const isAm = langOf(u) === 'am';
+  const prob = COMMON_PROBLEMS[probIdx];
+  s.data.problem = isAm ? (prob?.am || 'ብልሽት') : (prob?.en || 'Failure');
+  s.step = 'location';
+  setSession(ctx.from.id, s);
+  await ctx.answerCbQuery();
+  return ctx.reply(isAm ? 'የሚገኙበትን የሥራ ክፍል / ሕንፃ ይምረጡ (ወይም ይጻፉ)፦' : 'Select hospital department / location (or type):', locationKeyboard(isAm));
+});
+bot.action(/^reploc:(\d+)$/, async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  const s = getSession(ctx.from.id);
+  const locIdx = Number(ctx.match[1]);
+  const isAm = (s.data?.language || langOf(u)) === 'am';
+  const loc = HOSPITAL_LOCATIONS[locIdx];
+  const locName = isAm ? (loc?.am || 'ዋና ግቢ') : (loc?.en || 'Hospital');
+  if (s.flow === 'register' && s.step === 'department') {
+    s.data.department = locName;
+    const lang = s.data.language || 'en';
+    const user = await registerUser(ctx, { ...s.data, department: locName, language: lang });
+    clearSession(ctx.from.id);
+    await ctx.answerCbQuery();
+    await ctx.reply(t(lang, 'registered'));
+    return sendHome(ctx, user);
+  }
+  if (s.flow !== 'report') return ctx.answerCbQuery();
+  s.data.room = locName;
+  s.step = 'priority';
+  setSession(ctx.from.id, s);
+  await ctx.answerCbQuery();
+  return ctx.reply(isAm ? 'የቅድሚያ ደረጃ ይምረጡ፦' : 'Select priority level:', priorityKeyboard(isAm));
+});
+bot.action('repphoto:skip', async ctx => {
+  const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id); if(s.flow!=='report') return ctx.answerCbQuery();
+  s.step = 'confirm';
+  s.data.photo = null;
+  setSession(ctx.from.id, s);
+  await ctx.answerCbQuery('Photo skipped');
+  return showReportConfirm(ctx, u, s);
 });
 bot.action('main:mine', async ctx => {
   const u=await userByTelegram(ctx.from.id); await ctx.answerCbQuery(); if(!u) return;
@@ -251,15 +415,36 @@ bot.on('text', async ctx => {
   if(text.toLowerCase()==='/cancel') { clearSession(tg); return ctx.reply(msg(u,'cancelled')); }
   if(s.flow==='register') {
     if(s.step==='name') { s.data.full_name=text; s.step='phone'; setSession(tg,s); return ctx.reply(t(s.data.language,'registerPhone')); }
-    if(s.step==='phone') { s.data.phone=text; s.step='department'; setSession(tg,s); return ctx.reply(t(s.data.language,'registerDept')); }
-    if(s.step==='department') { s.data.department=text; const lang=s.data.language||'en'; const user=await registerUser(ctx,{...s.data,department:text,language:lang}); clearSession(tg); await ctx.reply(t(lang,'registered')); return sendHome(ctx,user); }
+    if(s.step==='phone') {
+      s.data.phone=text; s.step='department'; setSession(tg,s);
+      const isAm = s.data.language === 'am';
+      return ctx.reply(isAm ? 'የሚሰሩበትን ክፍል / ሕንፃ ይምረጡ፦' : 'Select your department / ward:', locationKeyboard(isAm));
+    }
+    if(s.step==='department') {
+      // typed fallback
+      s.data.department=text; const lang=s.data.language||'en'; const user=await registerUser(ctx,{...s.data,department:text,language:lang}); clearSession(tg); await ctx.reply(t(lang,'registered')); return sendHome(ctx,user);
+    }
   }
   if(s.flow==='report') {
-    if(s.step==='name') { s.data.equipment_name=text; s.step='model'; setSession(tg,s); return ctx.reply(msg(u,'askModel')); }
-    if(s.step==='model') { s.data.model=text; s.step='serial'; setSession(tg,s); return ctx.reply(msg(u,'askSerial')); }
-    if(s.step==='serial') { s.data.serial_number=text; s.step='room'; setSession(tg,s); return ctx.reply(msg(u,'askRoom')); }
-    if(s.step==='room') { s.data.room=text; s.step='problem'; setSession(tg,s); return ctx.reply(msg(u,'askProblem')); }
-    if(s.step==='problem') { s.data.problem=text; s.step='priority'; setSession(tg,s); return ctx.reply(msg(u,'askPriority'),Markup.inlineKeyboard([[Markup.button.callback(langOf(u)==='am'?'ዝቅተኛ / Low':'Low','priority:low'),Markup.button.callback(langOf(u)==='am'?'መካከለኛ / Medium':'Medium','priority:medium')],[Markup.button.callback(langOf(u)==='am'?'ከፍተኛ / High':'High','priority:high'),Markup.button.callback(langOf(u)==='am'?'አስቸኳይ / Critical':'Critical','priority:critical')]])); }
+    // typed fallback for model step
+    if(s.step==='model') {
+      s.data.model=text; s.data.equipment_name=s.data.equipment_type; s.data.serial_number='-';
+      s.step='problem'; setSession(tg,s);
+      const isAm = langOf(u) === 'am';
+      return ctx.reply(isAm ? 'የብልሽቱን ዓይነት ይምረጡ (ወይም ይጻፉ)፦' : 'Select or describe the problem:', problemKeyboard(isAm));
+    }
+    // typed fallback for problem step
+    if(s.step==='problem') {
+      s.data.problem=text; s.step='location'; setSession(tg,s);
+      const isAm = langOf(u) === 'am';
+      return ctx.reply(isAm ? 'የሚገኙበትን የሥራ ክፍል / ሕንፃ ይምረጡ (ወይም ይጻፉ)፦' : 'Select hospital department / location (or type):', locationKeyboard(isAm));
+    }
+    // typed fallback for location step
+    if(s.step==='location') {
+      s.data.room=text; s.step='priority'; setSession(tg,s);
+      const isAm = langOf(u) === 'am';
+      return ctx.reply(isAm ? 'የቅድሚያ ደረጃ ይምረጡ፦' : 'Select priority level:', priorityKeyboard(isAm));
+    }
     if(s.step==='photo' && text.toUpperCase()==='SKIP') { s.step='confirm'; setSession(tg,s); return showReportConfirm(ctx,u,s); }
   }
   if(s.flow==='track'&&s.step==='number') { const r=await getRequestByNo(text.toUpperCase()); clearSession(tg); if(!r||r.employee_id!==u.id) return ctx.reply('Request not found, or it does not belong to your account.'); return ctx.reply(`${r.request_no}\n${r.equipment_name}\nStatus: ${STATUS_LABEL[r.status]}\nPriority: ${r.priority}\nReported: ${r.reported_at}`); }
@@ -314,10 +499,24 @@ bot.on('text', async ctx => {
 });
 
 async function showReportConfirm(ctx,u,s) {
-  const d=s.data; const text=`${msg(u,'confirm')}\n\nEquipment: ${d.equipment_name}\nCategory: ${d.equipment_type}\nModel: ${d.model}\nSerial: ${d.serial_number}\nDepartment: ${u.department}\nLocation: ${d.room}\nProblem: ${d.problem}\nPriority: ${d.priority}\nPhoto: ${d.photo?'Attached':'Not provided'}`;
-  return ctx.reply(text,Markup.inlineKeyboard([[Markup.button.callback('Submit / አስገባ','report:submit'),Markup.button.callback('Cancel / ሰርዝ','report:cancel')]]));
+  const d = s.data;
+  const isAm = langOf(u) === 'am';
+  const priEmoji = { low:'🟢', medium:'🟡', high:'🟠', critical:'🔴' };
+  const priLabel = { low: isAm?'ዝቅተኛ':'Low', medium: isAm?'መካከለኛ':'Medium', high: isAm?'ከፍተኛ':'High', critical: isAm?'አስቸኳይ':'Critical' };
+  const text = isAm
+    ? `📋 *የጥያቄ ማጠቃለያ / Report Summary*\n\n🔧 መሣሪያ: ${d.equipment_type}\n📱 ሞዴል: ${d.model || '-'}\n❗ ችግር: ${d.problem}\n📍 ቦታ: ${d.room}\n${priEmoji[d.priority]||'⚪'} ቅድሚያ: ${priLabel[d.priority]||d.priority}\n📸 ፎቶ: ${d.photo?'✅ ተያይዟል':'❌ አልተያያዘም'}\n\nያረጋግጡና ያስገቡ ወይም ሰርዝ:`
+    : `📋 *Report Summary*\n\n🔧 Equipment: ${d.equipment_type}\n📱 Model: ${d.model || '-'}\n❗ Problem: ${d.problem}\n📍 Location: ${d.room}\n${priEmoji[d.priority]||'⚪'} Priority: ${priLabel[d.priority]||d.priority}\n📸 Photo: ${d.photo?'✅ Attached':'❌ Not provided'}\n\nConfirm and submit or cancel:`;
+  s.step = 'confirm';
+  setSession(ctx.from.id, s);
+  return ctx.reply(text, { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback(isAm?'✅ አስገባ / Submit':'✅ Submit','report:submit'), Markup.button.callback(isAm?'❌ ሰርዝ / Cancel':'❌ Cancel','report:cancel')]]) });
 }
-bot.action(/^priority:(low|medium|high|critical)$/, async ctx => { const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id); if(s.flow!=='report'||s.step!=='priority') return ctx.answerCbQuery(); s.data.priority=ctx.match[1]; s.step='photo'; setSession(ctx.from.id,s); await ctx.answerCbQuery(); return ctx.reply(msg(u,'askPhoto')); });
+bot.action(/^priority:(low|medium|high|critical)$/, async ctx => {
+  const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id);
+  if(s.flow!=='report'||s.step!=='priority') return ctx.answerCbQuery();
+  s.data.priority=ctx.match[1]; s.step='photo'; setSession(ctx.from.id,s); await ctx.answerCbQuery();
+  const isAm = langOf(u) === 'am';
+  return ctx.reply(isAm ? '📸 ፎቶ ማያያዝ ይፈልጋሉ? (ወይም ዝለሉ)' : '📸 Optionally attach a photo, or tap Skip:', photoKeyboard(isAm));
+});
 bot.on('photo', async ctx => {
   const s=getSession(ctx.from.id); const u=await userByTelegram(ctx.from.id); if(s.flow==='report'&&s.step==='photo') { const photo=ctx.message.photo[ctx.message.photo.length-1]; s.data.photo=photo.file_id; s.step='confirm'; setSession(ctx.from.id,s); return showReportConfirm(ctx,u,s); }
   if(s.flow==='techupdate') { const photo=ctx.message.photo[ctx.message.photo.length-1]; const r=await getRequestByNo(s.requestNo); if(r&&r.assigned_technician_id===u.id) { await query("INSERT INTO maintenance_activities(request_id,actor_user_id,activity_type,notes) VALUES(?,?,'photo_evidence',?)",[r.id,u.id,`Telegram photo file_id: ${photo.file_id}`]); return ctx.reply('Photo evidence recorded.'); } }
