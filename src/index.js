@@ -38,8 +38,9 @@ function mainKeyboard(u) {
   if (isStore(u) || isAdmin(u)) rows.push([Markup.button.callback('📦 Storekeeper / ንብረት','main:store')]);
   return Markup.inlineKeyboard(rows);
 }
-function roleKeyboard() { return Markup.inlineKeyboard([[Markup.button.callback('English','lang:en'),Markup.button.callback('አማርኛ','lang:am')]]); }
-function registrationLanguageKeyboard() { return Markup.inlineKeyboard([[Markup.button.callback('English','reglang:en'),Markup.button.callback('አማርኛ','reglang:am')]]); }
+function languageKeyboard() { return Markup.inlineKeyboard([[Markup.button.callback('🇬🇧 English','startlang:en'),Markup.button.callback('🇪🇹 አማርኛ','startlang:am')]]); }
+function roleKeyboard() { return languageKeyboard(); }
+function registrationLanguageKeyboard() { return languageKeyboard(); }
 async function sendHome(ctx, user) { await ctx.reply(msg(user,'welcome'), mainKeyboard(user)); }
 async function audit(user, action, type, id, details) { try { await log(user?.id, action, type, id, details); } catch(e) { console.error('audit:',e.message); } }
 
@@ -94,13 +95,11 @@ async function buildAndSendPdf(ctx, req, employee, tech = null) {
 
 bot.start(async ctx => {
   const tg = ctx.from.id;
-  let user = await userByTelegram(tg);
-  if (!user) {
-    setSession(tg,{flow:'register',step:'language',data:{}});
-    return ctx.reply('Welcome / እንኳን ደህና መጡ\nChoose your language / ቋንቋ ይምረጡ፦', registrationLanguageKeyboard());
-  }
-  if (!user.is_active) return ctx.reply('Your account is inactive. Contact IT administration. / መለያዎ አልተንቀሳቀሰም።');
-  await sendHome(ctx,user);
+  clearSession(tg);
+  return ctx.reply(
+    'Welcome to Amanuel Mental Specialized Hospital IT Support.\nእንኳን ወደ አማኑኤል ልዩ የአእምሮ ሆስፒታል የአይቲ ድጋፍ በደህና መጡ።\n\nPlease choose your language / እባክዎ ቋንቋ ይምረጡ፦',
+    languageKeyboard()
+  );
 });
 bot.command('help', async ctx => ctx.reply('Amanuel Hospital IT Support\n/start - Main menu\n/myid - Show your Telegram ID\n/admin commands: /addtech, /addstorekeeper, /setrole\nFor access, contact the IT administrator.'));
 bot.command('myid', ctx => ctx.reply(`Your Telegram ID: ${ctx.from.id}`));
@@ -143,13 +142,29 @@ bot.command('deactivate', async ctx => {
   await query('UPDATE users SET is_active=FALSE WHERE telegram_id=?',[id]); return ctx.reply('Account deactivated if it existed.');
 });
 
-bot.action(/^reglang:(en|am)$/, async ctx => { const s=getSession(ctx.from.id); if(s.flow!=='register') return ctx.answerCbQuery(); s.data.language=ctx.match[1]; s.step='name'; setSession(ctx.from.id,s); await ctx.answerCbQuery(); return ctx.reply(t(ctx.match[1],'registerName')); });
+bot.action(/^startlang:(en|am)$/, async ctx => {
+  const lang = ctx.match[1];
+  const tg = ctx.from.id;
+  await ctx.answerCbQuery();
+  let user = await userByTelegram(tg);
+  if (!user) {
+    setSession(tg, { flow: 'register', step: 'name', data: { language: lang } });
+    return ctx.reply(t(lang, 'registerName'));
+  }
+  if (!user.is_active) {
+    return ctx.reply(lang === 'am' ? 'መለያዎ አልተንቀሳቀሰም። የአይቲ አስተዳዳሪን ያነጋግሩ።' : 'Your account is inactive. Contact IT administration.');
+  }
+  await query('UPDATE users SET language=? WHERE telegram_id=?', [lang, tg]);
+  user.language = lang;
+  return ctx.reply(t(lang, 'welcome'), mainKeyboard(user));
+});
+bot.action(/^reglang:(en|am)$/, async ctx => { const s=getSession(ctx.from.id); s.data = s.data || {}; s.data.language=ctx.match[1]; s.step='name'; setSession(ctx.from.id,s); await ctx.answerCbQuery(); return ctx.reply(t(ctx.match[1],'registerName')); });
 bot.action(/^lang:(en|am)$/, async ctx => {
   const user=await userByTelegram(ctx.from.id); if(!user) return ctx.answerCbQuery();
   await query('UPDATE users SET language=? WHERE telegram_id=?',[ctx.match[1],ctx.from.id]); const fresh=await userByTelegram(ctx.from.id); await ctx.answerCbQuery('Language updated'); await ctx.reply(t(ctx.match[1],'welcome'),mainKeyboard(fresh));
 });
 
-bot.action('main:lang', async ctx => { await ctx.answerCbQuery(); return ctx.reply('Choose language / ቋንቋ ይምረጡ፦',roleKeyboard()); });
+bot.action('main:lang', async ctx => { await ctx.answerCbQuery(); return ctx.reply('Choose language / ቋንቋ ይምረጡ፦',languageKeyboard()); });
 bot.action('main:report', async ctx => {
   const u=await userByTelegram(ctx.from.id); await ctx.answerCbQuery(); if(!u) return ctx.reply('Send /start first.');
   setSession(ctx.from.id,{flow:'report',step:'category',data:{}});
