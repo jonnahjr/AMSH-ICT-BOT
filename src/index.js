@@ -121,16 +121,29 @@ const PROBLEMS_BY_CATEGORY = {
   ],
 };
 
+// One flat list: every ward, OPD room and office is selectable directly (no grouping).
 const HOSPITAL_LOCATIONS = [
-  { en: '🏥 OPD / Clinics', am: '🏥 የተመላላሽ (OPD)' },
-  { en: '🛏️ Inpatient Ward', am: '🛏️ የተኝቶ ህክምና ክፍል' },
-  { en: '💊 Pharmacy', am: '💊 ፋርማሲ' },
-  { en: '🔬 Laboratory', am: '🔬 ላብራቶሪ' },
+  ...Array.from({ length: 11 }, (_, i) => ({ en: `🛏️ Ward ${i + 1}`, am: `🛏️ ዋርድ ${i + 1}` })),
+  { en: '🔒 Forensic Ward', am: '🔒 ፎረንሲክ ዋርድ' },
+  ...Array.from({ length: 11 }, (_, i) => ({ en: `🏥 OPD ${30 + i}`, am: `🏥 ኦፒዲ ${30 + i}` })),
+  { en: '🔒 Forensic OPD', am: '🔒 ፎረንሲክ ኦፒዲ' },
+  { en: '💼 Medical Director Office', am: '💼 የሕክምና ዳይሬክተር ቢሮ' },
+  { en: '💼 Administration Office', am: '💼 አስተዳደር ቢሮ' },
+  { en: '💼 HR Office', am: '💼 የሰው ኃይል ቢሮ' },
+  { en: '💼 Finance Office', am: '💼 ፋይናንስ ቢሮ' },
+  { en: '💼 IT Office', am: '💼 አይቲ ቢሮ' },
+  { en: '💼 Nursing Office', am: '💼 የነርሲንግ ቢሮ' },
   { en: '📁 Card Office / Archive', am: '📁 ካርድ ክፍል' },
-  { en: '💼 Admin / Finance / HR', am: '💼 አስተዳደር / ፋይናንስ' },
+  { en: '📝 Reception / Registration', am: '📝 መቀበያ / ምዝገባ' },
+  { en: '💊 Pharmacy', am: '💊 ፋርማሲ' },
+  { en: '🔬 Laboratory', am: '🔬 ላብራሪ' },
+  { en: '🩻 Radiology / Imaging', am: '🩻 ራዲዮሎጂ' },
   { en: '🚨 Emergency', am: '🚨 ድንገተኛ ክፍል' },
-  { en: '📍 Other Location', am: '📍 ሌላ የሥራ ቦታ' }
+  { en: '📍 Other — type it', am: '📍 ሌላ — ይጻፉ' },
 ];
+// Stable callback keys so older messages keep resolving to the right place.
+const locKey = label => label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+HOSPITAL_LOCATIONS.forEach(l => { l.key = locKey(l.en); });
 
 function categoryKeyboard(isAm) {
   const labels = isAm ? CATEGORIES_AM : CATEGORIES_EN;
@@ -183,16 +196,19 @@ function problemPrompt(isAm, catIdx) {
 }
 
 function locationKeyboard(isAm) {
+  // Short labels (Ward 1, OPD 30) fit three per row; long office names take two.
   const rows = [];
-  for (let i = 0; i < HOSPITAL_LOCATIONS.length; i += 2) {
-    const l1 = HOSPITAL_LOCATIONS[i];
-    const row = [Markup.button.callback(isAm ? l1.am : l1.en, `reploc:${i}`)];
-    if (HOSPITAL_LOCATIONS[i + 1]) {
-      const l2 = HOSPITAL_LOCATIONS[i + 1];
-      row.push(Markup.button.callback(isAm ? l2.am : l2.en, `reploc:${i + 1}`));
-    }
-    rows.push(row);
-  }
+  let row = [];
+  let cap = 0;
+  HOSPITAL_LOCATIONS.forEach(loc => {
+    const label = isAm ? loc.am : loc.en;
+    const itemCap = label.length <= 14 ? 3 : 2;
+    if (row.length && itemCap !== cap) { rows.push(row); row = []; }
+    cap = itemCap;
+    row.push(Markup.button.callback(label, `reploc:${loc.key}`));
+    if (row.length === cap) { rows.push(row); row = []; }
+  });
+  if (row.length) rows.push(row);
   return Markup.inlineKeyboard(rows);
 }
 
@@ -646,13 +662,16 @@ bot.action(/^repprob:(\d+):(\d+)$/, async ctx => {
   await ctx.answerCbQuery();
   return ctx.reply(isAm ? 'የሚገኙበትን የሥራ ክፍል / ሕንፃ ይምረጡ (ወይም ይጻፉ)፦' : 'Select hospital department / location (or type):', locationKeyboard(isAm));
 });
-bot.action(/^reploc:(\d+)$/, async ctx => {
+bot.action(/^reploc:(.+)$/, async ctx => {
   const u = await userByTelegram(ctx.from.id);
   const s = getSession(ctx.from.id);
-  const locIdx = Number(ctx.match[1]);
+  const locMatch = String(ctx.match[1]);
   const isAm = (s.data?.language || langOf(u)) === 'am';
-  const loc = HOSPITAL_LOCATIONS[locIdx];
-  const locName = isAm ? (loc?.am || 'ዋና ግቢ') : (loc?.en || 'Hospital');
+  // Keys are stable; a numeric payload only exists on messages sent before this list changed.
+  const loc = HOSPITAL_LOCATIONS.find(l => l.key === locMatch)
+    || (/^\d+$/.test(locMatch) ? HOSPITAL_LOCATIONS[Number(locMatch)] : null);
+  if (!loc) { await ctx.answerCbQuery(); return ctx.reply(isAm ? 'ይህ ቦታ ከዝርዝሩ ተወግዷል። እባክዎ ከዚህ ይምረጡ ወይም ይጻፉ፦' : 'That location is no longer listed. Please pick again or type it:', locationKeyboard(isAm)); }
+  const locName = isAm ? loc.am : loc.en;
   if (s.flow === 'register' && s.step === 'department') {
     s.data.department = locName;
     const lang = s.data.language || 'en';
