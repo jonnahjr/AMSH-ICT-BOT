@@ -1,7 +1,16 @@
 require('dotenv').config();
 
 const fallbackDb = Buffer.from('cG9zdGdyZXNxbDovL3Bvc3RncmVzLmxvZ3lydXRsd3J6dnpwaG9ra2dxOkpvbm5haGpuciU0MDA5NDU2MjgwNzVAYXdzLTEtZXUtd2VzdC0xLnBvb2xlci5zdXBhYmFzZS5jb206NTQzMi9wb3N0Z3Jlcw==', 'base64').toString();
-const dbUrl = process.env.DATABASE_URL || fallbackDb;
+let dbUrl = process.env.DATABASE_URL || fallbackDb;
+
+// Automatically route around direct IPv6 host to IPv4 pooler to prevent ENETUNREACH on cloud hosts
+if (dbUrl.includes('db.logyrutlwrzvzphokkgq.supabase.co')) {
+  dbUrl = fallbackDb;
+}
+if (dbUrl.includes('Jonnahjnr@0945628075@')) {
+  dbUrl = dbUrl.replace('Jonnahjnr@0945628075@', 'Jonnahjnr%400945628075@');
+}
+
 const isPg = Boolean(dbUrl);
 
 let pool;
