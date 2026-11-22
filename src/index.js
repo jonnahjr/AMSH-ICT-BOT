@@ -47,8 +47,8 @@ async function ensureAdminUsers() {
   const ids = (process.env.ADMIN_TELEGRAM_IDS || '').split(',').map(s=>s.trim()).filter(Boolean);
   for (const id of ids) {
     const existing = await one('SELECT id FROM users WHERE telegram_id=?',[id]);
-    if (existing) await query("UPDATE users SET role='admin',is_active=1 WHERE telegram_id=?",[id]);
-    else await query("INSERT INTO users(telegram_id,full_name,role,is_active,language) VALUES(?,?,'admin',1,'en')",[id,`Administrator ${id}`]);
+    if (existing) await query("UPDATE users SET role='admin',is_active=TRUE WHERE telegram_id=?",[id]);
+    else await query("INSERT INTO users(telegram_id,full_name,role,is_active,language) VALUES(?,?,'admin',TRUE,'en')",[id,`Administrator ${id}`]);
   }
 }
 async function registerUser(ctx, data) {
@@ -73,7 +73,7 @@ async function autoAssign(requestId, equipmentType) {
   let candidates = [];
   if (patterns.length) {
     const clauses = patterns.map(()=> 'LOWER(specialization) LIKE ?').join(' OR ');
-    candidates = await query(`SELECT u.id,u.telegram_id,u.full_name,u.specialization, COUNT(r.id) AS open_jobs FROM users u LEFT JOIN requests r ON r.assigned_technician_id=u.id AND r.status IN ('assigned','accepted','in_progress','waiting_parts') WHERE u.role='technician' AND u.is_active=1 AND (${clauses}) GROUP BY u.id ORDER BY open_jobs ASC,u.id ASC`, patterns.map(p=>`%${p}%`));
+    candidates = await query(`SELECT u.id,u.telegram_id,u.full_name,u.specialization, COUNT(r.id) AS open_jobs FROM users u LEFT JOIN requests r ON r.assigned_technician_id=u.id AND r.status IN ('assigned','accepted','in_progress','waiting_parts') WHERE u.role='technician' AND u.is_active=TRUE AND (${clauses}) GROUP BY u.id ORDER BY open_jobs ASC,u.id ASC`, patterns.map(p=>`%${p}%`));
   }
   if (!candidates.length) return null;
   const chosen = candidates[0];
@@ -82,7 +82,7 @@ async function autoAssign(requestId, equipmentType) {
   return chosen;
 }
 async function notifyAdmins(text) {
-  const admins = await query("SELECT telegram_id FROM users WHERE role='admin' AND is_active=1");
+  const admins = await query("SELECT telegram_id FROM users WHERE role='admin' AND is_active=TRUE");
   for (const a of admins) { try { await bot.telegram.sendMessage(a.telegram_id,text); } catch(e) { console.warn('Admin notification failed:',e.message); } }
 }
 async function getRequestByNo(no) { return one('SELECT r.*,u.full_name AS employee_name,u.phone AS employee_phone,u.telegram_id AS employee_tg FROM requests r JOIN users u ON u.id=r.employee_id WHERE r.request_no=?',[no]); }
@@ -113,9 +113,9 @@ bot.command('addtech', async ctx => {
   if (!id || !name || !spec) return ctx.reply('Usage: /addtech TELEGRAM_ID Full Name Specialization\nExample: /addtech 123456789 Abebe Kebede Printer');
   const existingTech = await one('SELECT id FROM users WHERE telegram_id=?', [id]);
   if (existingTech) {
-    await query("UPDATE users SET full_name=?, role='technician', specialization=?, is_active=1 WHERE telegram_id=?", [name, spec, id]);
+    await query("UPDATE users SET full_name=?, role='technician', specialization=?, is_active=TRUE WHERE telegram_id=?", [name, spec, id]);
   } else {
-    await query("INSERT INTO users(telegram_id,full_name,role,specialization,is_active,language) VALUES(?,?,'technician',?,1,'en')", [id, name, spec]);
+    await query("INSERT INTO users(telegram_id,full_name,role,specialization,is_active,language) VALUES(?,?,'technician',?,TRUE,'en')", [id, name, spec]);
   }
   await audit(admin,'add_technician','user',null,`${id}:${name}:${spec}`); return ctx.reply(`Technician registered: ${name} (${spec}).`);
 });
@@ -125,9 +125,9 @@ bot.command('addstorekeeper', async ctx => {
   if (!id || !name) return ctx.reply('Usage: /addstorekeeper TELEGRAM_ID Full Name');
   const existingStore = await one('SELECT id FROM users WHERE telegram_id=?', [id]);
   if (existingStore) {
-    await query("UPDATE users SET full_name=?, role='storekeeper', is_active=1 WHERE telegram_id=?", [name, id]);
+    await query("UPDATE users SET full_name=?, role='storekeeper', is_active=TRUE WHERE telegram_id=?", [name, id]);
   } else {
-    await query("INSERT INTO users(telegram_id,full_name,role,is_active,language) VALUES(?,?,'storekeeper',1,'en')", [id, name]);
+    await query("INSERT INTO users(telegram_id,full_name,role,is_active,language) VALUES(?,?,'storekeeper',TRUE,'en')", [id, name]);
   }
   await audit(admin,'add_storekeeper','user',null,`${id}:${name}`); return ctx.reply(`Storekeeper registered: ${name}.`);
 });
@@ -140,7 +140,7 @@ bot.command('setrole', async ctx => {
 bot.command('deactivate', async ctx => {
   const admin=await userByTelegram(ctx.from.id); if(!isAdmin(admin)) return ctx.reply(msg(admin,'adminOnly'));
   const [,id]=ctx.message.text.split(/\s+/); if(!id) return ctx.reply('Usage: /deactivate TELEGRAM_ID');
-  await query('UPDATE users SET is_active=0 WHERE telegram_id=?',[id]); return ctx.reply('Account deactivated if it existed.');
+  await query('UPDATE users SET is_active=FALSE WHERE telegram_id=?',[id]); return ctx.reply('Account deactivated if it existed.');
 });
 
 bot.action(/^reglang:(en|am)$/, async ctx => { const s=getSession(ctx.from.id); if(s.flow!=='register') return ctx.answerCbQuery(); s.data.language=ctx.match[1]; s.step='name'; setSession(ctx.from.id,s); await ctx.answerCbQuery(); return ctx.reply(t(ctx.match[1],'registerName')); });
@@ -203,7 +203,7 @@ bot.action('main:admin', async ctx => { const u=await userByTelegram(ctx.from.id
 bot.action('admin:pending', async ctx => { const u=await userByTelegram(ctx.from.id); if(!isAdmin(u)) return ctx.answerCbQuery(); const rows=await query("SELECT request_no,equipment_name,equipment_type,priority FROM requests WHERE status='pending' ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END,reported_at ASC LIMIT 20"); await ctx.answerCbQuery(); if(!rows.length) return ctx.reply('No pending requests.'); for(const r of rows) await ctx.reply(`${r.request_no}\n${r.equipment_name} (${r.equipment_type})\nPriority: ${r.priority}`,Markup.inlineKeyboard([[Markup.button.callback('Retry auto-assign','admin:retry:'+r.request_no)]])); });
 bot.action(/^admin:retry:(.+)$/, async ctx => { const u=await userByTelegram(ctx.from.id); if(!isAdmin(u)) return ctx.answerCbQuery(); const r=await getRequestByNo(ctx.match[1]); if(!r) return ctx.answerCbQuery('Not found'); const tech=await autoAssign(r.id,r.equipment_type); await ctx.answerCbQuery(tech?'Assigned':'No suitable technician'); if(tech) { await bot.telegram.sendMessage(tech.telegram_id,`${msg(u,'assigned')}\n${r.request_no} – ${r.equipment_name}`); await ctx.reply(`Assigned to ${tech.full_name}.`); } else await ctx.reply(msg(u,'noTech')); });
 bot.action('admin:recent', async ctx => { const u=await userByTelegram(ctx.from.id); if(!isAdmin(u)) return ctx.answerCbQuery(); const rows=await query('SELECT request_no,equipment_name,status,priority FROM requests ORDER BY id DESC LIMIT 15'); await ctx.answerCbQuery(); return ctx.reply(rows.length?rows.map(r=>`${r.request_no} | ${r.equipment_name} | ${STATUS_LABEL[r.status]} | ${r.priority}`).join('\n'):'No requests yet.'); });
-bot.action('admin:workload', async ctx => { const u=await userByTelegram(ctx.from.id); if(!isAdmin(u)) return ctx.answerCbQuery(); const rows=await query("SELECT u.full_name,u.specialization,COUNT(r.id) AS jobs FROM users u LEFT JOIN requests r ON r.assigned_technician_id=u.id AND r.status IN ('assigned','accepted','in_progress','waiting_parts') WHERE u.role='technician' AND u.is_active=1 GROUP BY u.id ORDER BY jobs"); await ctx.answerCbQuery(); return ctx.reply(rows.length?rows.map(r=>`${r.full_name} (${r.specialization||'Unspecified'}): ${r.jobs} open jobs`).join('\n'):'No active technicians.'); });
+bot.action('admin:workload', async ctx => { const u=await userByTelegram(ctx.from.id); if(!isAdmin(u)) return ctx.answerCbQuery(); const rows=await query("SELECT u.full_name,u.specialization,COUNT(r.id) AS jobs FROM users u LEFT JOIN requests r ON r.assigned_technician_id=u.id AND r.status IN ('assigned','accepted','in_progress','waiting_parts') WHERE u.role='technician' AND u.is_active=TRUE GROUP BY u.id ORDER BY jobs"); await ctx.answerCbQuery(); return ctx.reply(rows.length?rows.map(r=>`${r.full_name} (${r.specialization||'Unspecified'}): ${r.jobs} open jobs`).join('\n'):'No active technicians.'); });
 
 bot.action('main:store', async ctx => { const u=await userByTelegram(ctx.from.id); await ctx.answerCbQuery(); if(!isStore(u)&&!isAdmin(u)) return ctx.reply(msg(u,'storeOnly')); return ctx.reply(msg(u,'storeMenu'),Markup.inlineKeyboard([[Markup.button.callback(msg(u,'storeAdd'),'store:add')],[Markup.button.callback(msg(u,'storeIssue'),'store:issue')],[Markup.button.callback(msg(u,'storeView'),'store:view')]])); });
 bot.action('store:add', async ctx => { const u=await userByTelegram(ctx.from.id); if(!isStore(u)&&!isAdmin(u)) return ctx.answerCbQuery(); setSession(ctx.from.id,{flow:'stockadd',step:'part',data:{}}); await ctx.answerCbQuery(); return ctx.reply(msg(u,'askPart')); });

@@ -37,7 +37,10 @@ if (isPg) {
 
 function toPgSql(sql) {
   let idx = 1;
-  return sql.replace(/\?/g, () => `$${idx++}`);
+  return sql
+    .replace(/\b([a-zA-Z0-9_]*\.?)is_active\s*=\s*1\b/gi, '$1is_active = TRUE')
+    .replace(/\b([a-zA-Z0-9_]*\.?)is_active\s*=\s*0\b/gi, '$1is_active = FALSE')
+    .replace(/\?/g, () => `$${idx++}`);
 }
 
 async function query(sql, params = []) {
