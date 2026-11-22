@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS users (
     telegram_id BIGINT NOT NULL UNIQUE,
     full_name VARCHAR(160) NOT NULL,
     phone VARCHAR(40) NULL,
+    email VARCHAR(160) NULL,
     department VARCHAR(160) NULL,
     role user_role NOT NULL DEFAULT 'employee',
     specialization VARCHAR(120) NULL,

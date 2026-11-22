@@ -1,7 +1,7 @@
 const messages = {
   en: {
     welcome: 'Welcome to Amanuel Mental Specialized Hospital IT Support. Choose an option:',
-    registerName: 'Please enter your full name:', registerPhone: 'Please share your phone number or type it:',
+    registerName: 'Please enter your full name:', registerPhone: 'Please share your phone number or type it:', registerEmail: 'Please enter your email address (or type - to skip):',
     registerDept: 'Enter your department / unit:', registered: 'Registration completed. You can now submit IT support requests.',
     menuReport: '📝 Report equipment failure', menuMine: '📋 My requests', menuTrack: '🔎 Track request', menuLanguage: '🌐 Change language',
     askCategory: 'Select equipment category:', askName: 'Enter equipment name:', askModel: 'Enter model (or type -):', askSerial: 'Enter serial number / asset tag (or type -):',
@@ -23,7 +23,7 @@ const messages = {
   },
   am: {
     welcome: 'ወደ አማኑኤል ልዩ የአእምሮ ሆስፒታል የአይቲ ድጋፍ በደህና መጡ። አማራጭ ይምረጡ፦',
-    registerName: 'ሙሉ ስምዎን ያስገቡ፦', registerPhone: 'ስልክ ቁጥርዎን ያስገቡ ወይም ያጋሩ፦',
+    registerName: 'ሙሉ ስምዎን ያስገቡ፦', registerPhone: 'ስልክ ቁጥርዎን ያስገቡ ወይም ያጋሩ፦', registerEmail: 'የኢሜይል አድራሻዎን ያስገቡ (ከሌለ - ይጻፉ)፦',
     registerDept: 'የሚሰሩበትን የሥራ ክፍል ያስገቡ፦', registered: 'ምዝገባዎ ተጠናቋል። የአይቲ ድጋፍ ጥያቄ ማቅረብ ይችላሉ።',
     menuReport: '📝 የመሣሪያ ብልሽት ሪፖርት', menuMine: '📋 የእኔ ጥያቄዎች', menuTrack: '🔎 ጥያቄ መከታተያ', menuLanguage: '🌐 ቋንቋ ቀይር',
     askCategory: 'የመሣሪያውን ዓይነት ይምረጡ፦', askName: 'የመሣሪያውን ስም ያስገቡ፦', askModel: 'ሞዴሉን ያስገቡ (ከሌለ - ይጻፉ)፦', askSerial: 'ሲሪያል ቁጥር / የንብረት መለያ (ከሌለ -)፦',

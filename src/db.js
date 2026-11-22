@@ -82,6 +82,7 @@ async function initTablesIfMissing() {
       telegram_id BIGINT NOT NULL UNIQUE,
       full_name VARCHAR(160) NOT NULL,
       phone VARCHAR(40) NULL,
+      email VARCHAR(160) NULL,
       department VARCHAR(160) NULL,
       role VARCHAR(30) NOT NULL DEFAULT 'employee',
       specialization VARCHAR(120) NULL,
@@ -171,6 +172,8 @@ async function initTablesIfMissing() {
       END IF;
     END $$;
   `);
+  // Email was added after the first release, so older installs need the column added in place.
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(160) NULL');
   // Bot conversation state, so an in-progress report survives a restart/redeploy.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS bot_sessions (

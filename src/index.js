@@ -292,10 +292,10 @@ async function registerUser(ctx, data) {
   const tg = ctx.from.id;
   const existing = await one('SELECT * FROM users WHERE telegram_id=?',[tg]);
   if (existing) {
-    await query('UPDATE users SET full_name=?,phone=?,department=? WHERE telegram_id=?',[data.full_name,data.phone,data.department,tg]);
+    await query('UPDATE users SET full_name=?,phone=?,email=?,department=? WHERE telegram_id=?',[data.full_name,data.phone,data.email||null,data.department,tg]);
     return one('SELECT * FROM users WHERE telegram_id=?',[tg]);
   }
-  await query("INSERT INTO users(telegram_id,full_name,phone,department,role,language) VALUES(?,?,?,?, 'employee',?)",[tg,data.full_name,data.phone,data.department,data.language || 'en']);
+  await query("INSERT INTO users(telegram_id,full_name,phone,email,department,role,language) VALUES(?,?,?,?,?, 'employee',?)",[tg,data.full_name,data.phone,data.email||null,data.department,data.language || 'en']);
   return one('SELECT * FROM users WHERE telegram_id=?',[tg]);
 }
 
@@ -318,11 +318,51 @@ async function autoAssign(requestId, equipmentType) {
   await query("INSERT INTO maintenance_activities(request_id,actor_user_id,activity_type,notes) VALUES(?,?,'auto_assigned',?)",[requestId,chosen.id,`Automatically assigned by specialization and lowest open workload (${chosen.specialization || 'unspecified'}).`]);
   return chosen;
 }
-async function notifyAdmins(text) {
+async function notifyAdmins(text, photoFileId) {
   const admins = await query("SELECT telegram_id FROM users WHERE role='admin' AND is_active=TRUE");
-  for (const a of admins) { try { await bot.telegram.sendMessage(a.telegram_id,text); } catch(e) { console.warn('Admin notification failed:',e.message); } }
+  for (const a of admins) {
+    try {
+      await bot.telegram.sendMessage(a.telegram_id,text);
+      if (photoFileId) await bot.telegram.sendPhoto(a.telegram_id,photoFileId,{caption:'Photo evidence / የችግሩ ፎቶ'});
+    } catch(e) { console.warn('Admin notification failed:',e.message); }
+  }
 }
-async function getRequestByNo(no) { return one('SELECT r.*,u.full_name AS employee_name,u.phone AS employee_phone,u.telegram_id AS employee_tg FROM requests r JOIN users u ON u.id=r.employee_id WHERE r.request_no=?',[no]); }
+async function getRequestByNo(no) { return one('SELECT r.*,u.full_name AS employee_name,u.phone AS employee_phone,u.email AS employee_email,u.telegram_id AS employee_tg,t.full_name AS technician_name FROM requests r JOIN users u ON u.id=r.employee_id LEFT JOIN users t ON t.id=r.assigned_technician_id WHERE r.request_no=?',[no]); }
+// Everything an administrator needs about a request: who reported it, how to reach them and what is broken.
+function requestCard(r, title) {
+  const fmtWhen = v => { if(!v) return '-'; const d=new Date(v); return isNaN(d.getTime()) ? String(v) : d.toISOString().slice(0,16).replace('T',' ')+' UTC'; };
+  const row = (icon,label,value) => `${icon} ${label}: ${safe(value)}`;
+  return [
+    title,
+    `🎫 ${safe(r.request_no)}`,
+    '',
+    '👤 Who reported it / ማን እንደገለጸ',
+    row('👤','Name / ስም',r.employee_name),
+    row('📞','Phone / ስልክ',r.employee_phone),
+    row('📧','Email / ኢሜይል',r.employee_email),
+    row('💬','Telegram ID',r.employee_tg),
+    row('🏢','Department / ክፍል',r.department),
+    '',
+    '📍 Where / የሚገኝበት',
+    row('📍','Location / ቦታ',r.room_location),
+    '',
+    '🖥️ Equipment / መሣሪያ',
+    row('🖥️','Category / ዓይነት',r.equipment_type),
+    row('🔧','Device / መሣሪያ',r.equipment_name),
+    row('🔖','Model / ሞዴል',r.model),
+    row('🔢','Serial / ሲሪያል',r.serial_number),
+    row('🏷️','Asset tag / የንብረት መለያ',r.asset_tag),
+    '',
+    '⚠️ Problem / ችግር',
+    safe(r.problem_description),
+    '',
+    row('🚦','Priority / ቅድሚያ',r.priority),
+    row('📌','Status / ሁኔታ',(STATUS_LABEL[r.status]||r.status||'-')+(r.technician_name?` · ${r.technician_name}`:'')),
+    row('👷','Technician / ቴክኒሻን',r.technician_name||'Not assigned / አልተመደበም'),
+    row('🕒','Reported / የተመዘገበበት',fmtWhen(r.reported_at)),
+    row('📎','Photo / ፎቶ',r.attachment_file_id?'Attached below / ከዚህ በታች ተያይዟል':'None / የለም'),
+  ].join('\n');
+}
 // Request numbers are derived from the highest number issued today, so deleting a request
 // or two simultaneous submissions can never collide on the unique request_no column.
 async function nextRequestNo() {
@@ -460,6 +500,15 @@ bot.command('mytickets', async ctx => {
   const header = isAm ? '📋 *የእኔ ጥያቄዎች*\n\n' : '📋 *My Requests*\n\n';
   const lines = rows.map(r => `${r.request_no}\n${r.equipment_name} | ${STATUS_LABEL[r.status]} | ${r.priority}`);
   return ctx.reply(header + lines.join('\n\n'), { parse_mode: 'Markdown' });
+});
+
+// /register — (re)fill name, phone, email and department
+bot.command('register', async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  const lang = langOf(u);
+  clearSession(ctx.from.id);
+  setSession(ctx.from.id, { flow: 'register', step: 'name', data: { language: lang } });
+  return ctx.reply(t(lang, 'registerName'));
 });
 
 // /lang — change language
@@ -805,8 +854,9 @@ bot.action('report:submit', async ctx => {
   const r=await getRequestByNo(requestNo);
   clearSession(ctx.from.id); await ctx.reply(`${msg(u,'submitted')} ${requestNo}${assigned?`\nAssigned technician: ${assigned.full_name}`:''}`);
   if(assigned) { try { await bot.telegram.sendMessage(assigned.telegram_id,`${msg(u,'assigned')}\n${requestNo}\n${d.equipment_name} (${d.equipment_type})\nPriority: ${d.priority}\nLocation: ${d.room}`); if(d.photo) await bot.telegram.sendPhoto(assigned.telegram_id,d.photo,{caption:`Evidence for ${requestNo}`}); } catch(e){} }
-  else await notifyAdmins(`UNASSIGNED REQUEST: ${requestNo}\n${d.equipment_name} (${d.equipment_type})\nNo matching available technician. Please review.`);
-  await notifyAdmins(`New IT request ${requestNo} submitted. ${assigned?`Auto-assigned to ${assigned.full_name}.`:'Awaiting technician assignment.'}`);
+  if(r) await notifyAdmins(requestCard(r, assigned
+    ? '🆕 New IT request — assigned / አዲስ ጥያቄ — ተመድቧል'
+    : '🆕 New IT request — needs assignment / አዲስ ጥያቄ — ምዝገባ ያስፈልገዋል'), r.attachment_file_id||null);
   const file=path.join(reportDir,`${requestNo}-request.pdf`); await generateRequestPdf(r,u,file,assigned); await ctx.replyWithDocument({source:file,filename:`${requestNo}.pdf`}); await ctx.reply('Main menu / ዋና ምናሌ',mainKeyboard(u));
 });
 bot.action('report:cancel', async ctx => { clearSession(ctx.from.id); await ctx.answerCbQuery(); return ctx.reply('Report cancelled. / ሪፖርቱ ተሰርዟል።'); });
@@ -823,7 +873,12 @@ bot.on('text', async ctx => {
   if(s.flow==='register') {
     if(s.step==='name') { s.data.full_name=text; s.step='phone'; setSession(tg,s); return ctx.reply(t(s.data.language,'registerPhone')); }
     if(s.step==='phone') {
-      s.data.phone=text; s.step='department'; setSession(tg,s);
+      s.data.phone=text; s.step='email'; setSession(tg,s);
+      return ctx.reply(t(s.data.language,'registerEmail'));
+    }
+    if(s.step==='email') {
+      // Optional: "-" means the employee has no email address.
+      s.data.email = text === '-' ? null : text; s.step='department'; setSession(tg,s);
       const isAm = s.data.language === 'am';
       return ctx.reply(isAm ? 'የሚሰሩበትን ክፍል / ሕንፃ ይምረጡ፦' : 'Select your department / ward:', locationKeyboard(isAm));
     }
