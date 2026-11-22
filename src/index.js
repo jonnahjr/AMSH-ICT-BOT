@@ -2,7 +2,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { Telegraf, Markup } = require('telegraf');
-const { query, one, log, pool } = require('./db');
+const { query, one, log, pool, initTablesIfMissing } = require('./db');
 const { t } = require('./i18n');
 const { generateRequestPdf } = require('./pdf');
 
@@ -110,14 +110,24 @@ bot.command('addtech', async ctx => {
   const admin = await userByTelegram(ctx.from.id); if (!isAdmin(admin)) return ctx.reply(msg(admin,'adminOnly'));
   const parts = ctx.message.text.split(' ').slice(1); const id=parts.shift(); const spec=parts.pop(); const name=parts.join(' ');
   if (!id || !name || !spec) return ctx.reply('Usage: /addtech TELEGRAM_ID Full Name Specialization\nExample: /addtech 123456789 Abebe Kebede Printer');
-  await query("INSERT INTO users(telegram_id,full_name,role,specialization,is_active,language) VALUES(?,?,'technician',?,1,'en') ON DUPLICATE KEY UPDATE full_name=VALUES(full_name),role='technician',specialization=VALUES(specialization),is_active=1",[id,name,spec]);
+  const existingTech = await one('SELECT id FROM users WHERE telegram_id=?', [id]);
+  if (existingTech) {
+    await query("UPDATE users SET full_name=?, role='technician', specialization=?, is_active=1 WHERE telegram_id=?", [name, spec, id]);
+  } else {
+    await query("INSERT INTO users(telegram_id,full_name,role,specialization,is_active,language) VALUES(?,?,'technician',?,1,'en')", [id, name, spec]);
+  }
   await audit(admin,'add_technician','user',null,`${id}:${name}:${spec}`); return ctx.reply(`Technician registered: ${name} (${spec}).`);
 });
 bot.command('addstorekeeper', async ctx => {
   const admin = await userByTelegram(ctx.from.id); if (!isAdmin(admin)) return ctx.reply(msg(admin,'adminOnly'));
   const parts=ctx.message.text.split(' ').slice(1); const id=parts.shift(); const name=parts.join(' ');
   if (!id || !name) return ctx.reply('Usage: /addstorekeeper TELEGRAM_ID Full Name');
-  await query("INSERT INTO users(telegram_id,full_name,role,is_active,language) VALUES(?,?,'storekeeper',1,'en') ON DUPLICATE KEY UPDATE full_name=VALUES(full_name),role='storekeeper',is_active=1",[id,name]);
+  const existingStore = await one('SELECT id FROM users WHERE telegram_id=?', [id]);
+  if (existingStore) {
+    await query("UPDATE users SET full_name=?, role='storekeeper', is_active=1 WHERE telegram_id=?", [name, id]);
+  } else {
+    await query("INSERT INTO users(telegram_id,full_name,role,is_active,language) VALUES(?,?,'storekeeper',1,'en')", [id, name]);
+  }
   await audit(admin,'add_storekeeper','user',null,`${id}:${name}`); return ctx.reply(`Storekeeper registered: ${name}.`);
 });
 bot.command('setrole', async ctx => {
@@ -159,7 +169,7 @@ bot.action('main:mine', async ctx => {
 bot.action('main:track', async ctx => { const u=await userByTelegram(ctx.from.id); await ctx.answerCbQuery(); setSession(ctx.from.id,{flow:'track',step:'number'}); return ctx.reply(langOf(u)==='am'?'የጥያቄ ቁጥርዎን ያስገቡ (ለምሳሌ AMH-IT-20261119-0001)፦':'Enter your request number (e.g. AMH-IT-20261119-0001):'); });
 
 bot.action('main:tech', async ctx => { const u=await userByTelegram(ctx.from.id); await ctx.answerCbQuery(); if(!isTech(u)) return ctx.reply(msg(u,'techOnly'));
-  const rows=await query("SELECT request_no,equipment_name,equipment_type,status,priority FROM requests WHERE assigned_technician_id=? AND status IN ('assigned','accepted','in_progress','waiting_parts') ORDER BY FIELD(priority,'critical','high','medium','low'),reported_at ASC LIMIT 15",[u.id]);
+  const rows=await query("SELECT request_no,equipment_name,equipment_type,status,priority FROM requests WHERE assigned_technician_id=? AND status IN ('assigned','accepted','in_progress','waiting_parts') ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END,reported_at ASC LIMIT 15",[u.id]);
   if(!rows.length) return ctx.reply(msg(u,'noJobs'));
   for(const r of rows) await ctx.reply(`${r.request_no}\n${r.equipment_name} (${r.equipment_type})\n${STATUS_LABEL[r.status]} | ${r.priority}`,Markup.inlineKeyboard([[Markup.button.callback('Open / ክፈት',`techopen:${r.request_no}`)]]));
 });
@@ -189,7 +199,7 @@ bot.action('main:admin', async ctx => { const u=await userByTelegram(ctx.from.id
     [Markup.button.callback(msg(u,'adminTechs'),'admin:workload')]
   ]));
 });
-bot.action('admin:pending', async ctx => { const u=await userByTelegram(ctx.from.id); if(!isAdmin(u)) return ctx.answerCbQuery(); const rows=await query("SELECT request_no,equipment_name,equipment_type,priority FROM requests WHERE status='pending' ORDER BY FIELD(priority,'critical','high','medium','low'),reported_at ASC LIMIT 20"); await ctx.answerCbQuery(); if(!rows.length) return ctx.reply('No pending requests.'); for(const r of rows) await ctx.reply(`${r.request_no}\n${r.equipment_name} (${r.equipment_type})\nPriority: ${r.priority}`,Markup.inlineKeyboard([[Markup.button.callback('Retry auto-assign','admin:retry:'+r.request_no)]])); });
+bot.action('admin:pending', async ctx => { const u=await userByTelegram(ctx.from.id); if(!isAdmin(u)) return ctx.answerCbQuery(); const rows=await query("SELECT request_no,equipment_name,equipment_type,priority FROM requests WHERE status='pending' ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END,reported_at ASC LIMIT 20"); await ctx.answerCbQuery(); if(!rows.length) return ctx.reply('No pending requests.'); for(const r of rows) await ctx.reply(`${r.request_no}\n${r.equipment_name} (${r.equipment_type})\nPriority: ${r.priority}`,Markup.inlineKeyboard([[Markup.button.callback('Retry auto-assign','admin:retry:'+r.request_no)]])); });
 bot.action(/^admin:retry:(.+)$/, async ctx => { const u=await userByTelegram(ctx.from.id); if(!isAdmin(u)) return ctx.answerCbQuery(); const r=await getRequestByNo(ctx.match[1]); if(!r) return ctx.answerCbQuery('Not found'); const tech=await autoAssign(r.id,r.equipment_type); await ctx.answerCbQuery(tech?'Assigned':'No suitable technician'); if(tech) { await bot.telegram.sendMessage(tech.telegram_id,`${msg(u,'assigned')}\n${r.request_no} – ${r.equipment_name}`); await ctx.reply(`Assigned to ${tech.full_name}.`); } else await ctx.reply(msg(u,'noTech')); });
 bot.action('admin:recent', async ctx => { const u=await userByTelegram(ctx.from.id); if(!isAdmin(u)) return ctx.answerCbQuery(); const rows=await query('SELECT request_no,equipment_name,status,priority FROM requests ORDER BY id DESC LIMIT 15'); await ctx.answerCbQuery(); return ctx.reply(rows.length?rows.map(r=>`${r.request_no} | ${r.equipment_name} | ${STATUS_LABEL[r.status]} | ${r.priority}`).join('\n'):'No requests yet.'); });
 bot.action('admin:workload', async ctx => { const u=await userByTelegram(ctx.from.id); if(!isAdmin(u)) return ctx.answerCbQuery(); const rows=await query("SELECT u.full_name,u.specialization,COUNT(r.id) AS jobs FROM users u LEFT JOIN requests r ON r.assigned_technician_id=u.id AND r.status IN ('assigned','accepted','in_progress','waiting_parts') WHERE u.role='technician' AND u.is_active=1 GROUP BY u.id ORDER BY jobs"); await ctx.answerCbQuery(); return ctx.reply(rows.length?rows.map(r=>`${r.full_name} (${r.specialization||'Unspecified'}): ${r.jobs} open jobs`).join('\n'):'No active technicians.'); });
@@ -202,7 +212,7 @@ bot.action('store:view', async ctx => { const u=await userByTelegram(ctx.from.id
 bot.action('report:submit', async ctx => {
   const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id); if(s.flow!=='report'||s.step!=='confirm') return ctx.answerCbQuery('No report in progress.');
   const d=s.data; const stamp=new Date().toISOString().slice(0,10).replace(/-/g,'');
-  const count=await one('SELECT COUNT(*) AS n FROM requests WHERE DATE(reported_at)=CURDATE()'); const requestNo=`AMH-IT-${stamp}-${String(Number(count.n)+1).padStart(4,'0')}`;
+  const count=await one('SELECT COUNT(*) AS n FROM requests WHERE DATE(reported_at)=CURRENT_DATE'); const requestNo=`AMH-IT-${stamp}-${String(Number(count.n)+1).padStart(4,'0')}`;
   const result=await query("INSERT INTO requests(request_no,employee_id,equipment_type,equipment_name,model,serial_number,department,room_location,problem_description,priority,attachment_file_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",[requestNo,u.id,d.equipment_type,d.equipment_name,d.model==='-'?null:d.model,d.serial_number==='-'?null:d.serial_number,u.department,d.room,d.problem,d.priority,d.photo||null]);
   await query("INSERT INTO maintenance_activities(request_id,actor_user_id,activity_type,notes) VALUES(?,?,'submitted','Employee submitted failure report through Telegram.')",[result.insertId,u.id]); await audit(u,'submit_request','request',result.insertId,requestNo);
   const assigned=await autoAssign(result.insertId,d.equipment_type); const r=await getRequestByNo(requestNo);
@@ -243,7 +253,11 @@ bot.on('text', async ctx => {
     if(s.step==='repair') { s.data.repair_actions=text; s.step='parts'; setSession(tg,s); return ctx.reply(msg(u,'parts')); }
     if(s.step==='parts') {
       s.data.parts_used=text==='NONE'?'None':text;
-      await query('UPDATE requests SET diagnosis=?,repair_actions=?,parts_used=?,status=?,completed_at=IF(?,NOW(),completed_at) WHERE id=?',[s.data.diagnosis,s.data.repair_actions,s.data.parts_used,s.data.finishing?'completed':'in_progress',s.data.finishing?1:0,r.id]);
+      if (s.data.finishing) {
+        await query('UPDATE requests SET diagnosis=?,repair_actions=?,parts_used=?,status=?,completed_at=NOW() WHERE id=?',[s.data.diagnosis,s.data.repair_actions,s.data.parts_used,'completed',r.id]);
+      } else {
+        await query('UPDATE requests SET diagnosis=?,repair_actions=?,parts_used=?,status=? WHERE id=?',[s.data.diagnosis,s.data.repair_actions,s.data.parts_used,'in_progress',r.id]);
+      }
       await query("INSERT INTO maintenance_activities(request_id,actor_user_id,activity_type,notes) VALUES(?,?,?,?)",[r.id,u.id,s.data.finishing?'completed':'work_update',`Diagnosis: ${s.data.diagnosis}; Repair: ${s.data.repair_actions}; Parts: ${s.data.parts_used}`]); await audit(u,'maintenance_update','request',r.id,s.data.finishing?'completed':'in_progress');
       clearSession(tg); await ctx.reply(s.data.finishing?msg(u,'done'):msg(u,'updated'));
       const fresh=await getRequestByNo(r.request_no); const employee=await one('SELECT * FROM users WHERE id=?',[r.employee_id]);
@@ -257,7 +271,20 @@ bot.on('text', async ctx => {
   if(s.flow==='stockadd') {
     if(s.step==='part') { s.data.part=text; s.step='qty'; setSession(tg,s); return ctx.reply(msg(u,'askQty')); }
     if(s.step==='qty') { const n=Number(text); if(!Number.isFinite(n)||n<=0) return ctx.reply('Enter a valid positive quantity.'); s.data.qty=n; s.step='unit'; setSession(tg,s); return ctx.reply(msg(u,'askUnit')); }
-    if(s.step==='unit') { s.data.unit=text; const [res]=await pool.execute('INSERT INTO spare_parts(item_name,quantity,unit) VALUES(?,?,?) ON DUPLICATE KEY UPDATE quantity=quantity+VALUES(quantity),unit=VALUES(unit)',[s.data.part,s.data.qty,s.data.unit]); const p=await one('SELECT id FROM spare_parts WHERE item_name=?',[s.data.part]); await query("INSERT INTO spare_transactions(part_id,actor_user_id,transaction_type,quantity,notes) VALUES(?,?,'received',?,?)",[p.id,u.id,s.data.qty,'Stock received / added']); await audit(u,'stock_received','spare_part',p.id,`${s.data.qty} ${s.data.unit}`); clearSession(tg); return ctx.reply(msg(u,'stockUpdated')); }
+    if(s.step==='unit') {
+      s.data.unit=text;
+      const pExisting = await one('SELECT id, quantity FROM spare_parts WHERE item_name=?', [s.data.part]);
+      if (pExisting) {
+        await query('UPDATE spare_parts SET quantity=quantity+?, unit=? WHERE id=?', [s.data.qty, s.data.unit, pExisting.id]);
+      } else {
+        await query('INSERT INTO spare_parts(item_name,quantity,unit) VALUES(?,?,?)', [s.data.part, s.data.qty, s.data.unit]);
+      }
+      const p=await one('SELECT id FROM spare_parts WHERE item_name=?',[s.data.part]);
+      await query("INSERT INTO spare_transactions(part_id,actor_user_id,transaction_type,quantity,notes) VALUES(?,?,'received',?,?)",[p.id,u.id,s.data.qty,'Stock received / added']);
+      await audit(u,'stock_received','spare_part',p.id,`${s.data.qty} ${s.data.unit}`);
+      clearSession(tg);
+      return ctx.reply(msg(u,'stockUpdated'));
+    }
   }
   if(s.flow==='stockissue') {
     if(s.step==='part') { s.data.part=text; s.step='qty'; setSession(tg,s); return ctx.reply(msg(u,'askQty')); }
@@ -282,7 +309,13 @@ bot.on('photo', async ctx => {
 bot.catch((err,ctx)=>{ console.error('Bot error:',err); if(ctx) ctx.reply('An error occurred. Please try again or contact IT administration. / ስህተት ተፈጥሯል።').catch(()=>{}); });
 
 (async()=>{
-  try { await pool.query('SELECT 1'); await ensureAdminUsers(); await bot.launch(); console.log('Amanuel Hospital IT Support Bot is running.'); }
+  try {
+    await initTablesIfMissing();
+    await pool.query('SELECT 1');
+    await ensureAdminUsers();
+    await bot.launch();
+    console.log('Amanuel Hospital IT Support Bot is running.');
+  }
   catch(err) { console.error('Startup failed:',err); process.exit(1); }
 })();
 process.once('SIGINT',()=>bot.stop('SIGINT')); process.once('SIGTERM',()=>bot.stop('SIGTERM'));
