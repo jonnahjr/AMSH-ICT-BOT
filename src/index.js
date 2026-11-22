@@ -448,6 +448,15 @@ bot.action(/^lang:(en|am)$/, async ctx => {
   await query('UPDATE users SET language=? WHERE telegram_id=?',[ctx.match[1],ctx.from.id]); const fresh=await userByTelegram(ctx.from.id); await ctx.answerCbQuery('Language updated'); await ctx.reply(t(ctx.match[1],'welcome'),mainKeyboard(fresh));
 });
 
+// Helper: notify user that session expired and offer restart
+async function sessionExpired(ctx) {
+  await ctx.answerCbQuery('Session expired — please start a new report.');
+  return ctx.reply(
+    '⚠️ Your session has expired (bot restarted).\nፈሳሽ ቀናል — እባክዎ እንደገና ይጀምሩ።\n\nTap below to start a new report:',
+    Markup.inlineKeyboard([[Markup.button.callback('🔧 New Report / አዲስ ሪፖርት', 'main:report')]])
+  );
+}
+
 bot.action('main:lang', async ctx => { await ctx.answerCbQuery(); return ctx.reply('Choose language / ቋንቋ ይምረጡ፦',languageKeyboard()); });
 bot.action('main:report', async ctx => {
   const u=await userByTelegram(ctx.from.id); await ctx.answerCbQuery(); if(!u) return ctx.reply('Send /start first.');
@@ -456,7 +465,8 @@ bot.action('main:report', async ctx => {
   return ctx.reply(isAm ? 'የመሣሪያውን ዓይነት ይምረጡ፦' : 'Select equipment category:', categoryKeyboard(isAm));
 });
 bot.action(/^cat:(\d+)$/, async ctx => {
-  const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id); if(s.flow!=='report') return ctx.answerCbQuery('Start a new report first.');
+  const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id);
+  if(s.flow!=='report') return sessionExpired(ctx);
   const catIdx = Number(ctx.match[1]);
   s.data.equipment_type = CATEGORIES[catIdx] || 'Other electronics';
   s.data.catIdx = catIdx;
@@ -467,7 +477,8 @@ bot.action(/^cat:(\d+)$/, async ctx => {
   return ctx.reply(isAm ? 'የመሣሪያውን ሞዴል ይምረጡ (ወይም ይጻፉ)፦' : 'Select device / model (or type it):', modelKeyboard(catIdx, isAm));
 });
 bot.action(/^repmodel:(\d+):(\d+)$/, async ctx => {
-  const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id); if(s.flow!=='report') return ctx.answerCbQuery();
+  const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id);
+  if(s.flow!=='report' || s.step!=='model') return sessionExpired(ctx);
   const catIdx = Number(ctx.match[1]);
   const modelIdx = Number(ctx.match[2]);
   const models = DEVICE_MODELS[catIdx] || DEVICE_MODELS[7];
@@ -481,7 +492,8 @@ bot.action(/^repmodel:(\d+):(\d+)$/, async ctx => {
   return ctx.reply(isAm ? 'የብልሽቱን ዓይነት ይምረጡ (ወይም ይጻፉ)፦' : 'Select or describe the problem:', problemKeyboard(isAm));
 });
 bot.action(/^repprob:(\d+)$/, async ctx => {
-  const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id); if(s.flow!=='report') return ctx.answerCbQuery();
+  const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id);
+  if(s.flow!=='report' || s.step!=='problem') return sessionExpired(ctx);
   const probIdx = Number(ctx.match[1]);
   const isAm = langOf(u) === 'am';
   const prob = COMMON_PROBLEMS[probIdx];
@@ -507,7 +519,7 @@ bot.action(/^reploc:(\d+)$/, async ctx => {
     await ctx.reply(t(lang, 'registered'));
     return sendHome(ctx, user);
   }
-  if (s.flow !== 'report') return ctx.answerCbQuery();
+  if (s.flow !== 'report' || s.step !== 'location') return sessionExpired(ctx);
   s.data.room = locName;
   s.step = 'priority';
   setSession(ctx.from.id, s);
@@ -515,7 +527,8 @@ bot.action(/^reploc:(\d+)$/, async ctx => {
   return ctx.reply(isAm ? 'የቅድሚያ ደረጃ ይምረጡ፦' : 'Select priority level:', priorityKeyboard(isAm));
 });
 bot.action('repphoto:skip', async ctx => {
-  const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id); if(s.flow!=='report') return ctx.answerCbQuery();
+  const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id);
+  if(s.flow!=='report' || s.step!=='photo') return sessionExpired(ctx);
   s.step = 'confirm';
   s.data.photo = null;
   setSession(ctx.from.id, s);
@@ -695,7 +708,7 @@ async function showReportConfirm(ctx,u,s) {
 }
 bot.action(/^priority:(low|medium|high|critical)$/, async ctx => {
   const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id);
-  if(s.flow!=='report'||s.step!=='priority') return ctx.answerCbQuery();
+  if(s.flow!=='report'||s.step!=='priority') return sessionExpired(ctx);
   s.data.priority=ctx.match[1]; s.step='photo'; setSession(ctx.from.id,s); await ctx.answerCbQuery();
   const isAm = langOf(u) === 'am';
   return ctx.reply(isAm ? '📸 ፎቶ ማያያዝ ይፈልጋሉ? (ወይም ዝለሉ)' : '📸 Optionally attach a photo, or tap Skip:', photoKeyboard(isAm));
