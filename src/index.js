@@ -672,6 +672,16 @@ bot.action(/^reploc:(.+)$/, async ctx => {
     || (/^\d+$/.test(locMatch) ? HOSPITAL_LOCATIONS[Number(locMatch)] : null);
   if (!loc) { await ctx.answerCbQuery(); return ctx.reply(isAm ? 'ይህ ቦታ ከዝርዝሩ ተወግዷል። እባክዎ ከዚህ ይምረጡ ወይም ይጻፉ፦' : 'That location is no longer listed. Please pick again or type it:', locationKeyboard(isAm)); }
   const locName = isAm ? loc.am : loc.en;
+  // "Other" must not save the label itself: keep the step where it is and wait for typed text.
+  if (loc.key === 'other-type-it') {
+    if (s.flow === 'register' && s.step === 'department') {
+      await ctx.answerCbQuery();
+      return ctx.reply(isAm ? 'የሚሰሩበትን ክፍል / ሕንፃ ይጻፉ (ምሳሌ፦ Ward 6 ቢሮ)፦' : 'Type your department / ward (example: Ward 6 office):');
+    }
+    if (s.flow !== 'report' || s.step !== 'location') return sessionExpired(ctx);
+    await ctx.answerCbQuery();
+    return ctx.reply(isAm ? 'የሚገኙበትን ቦታ ይጻፉ (ምሳሌ፦ ከWard 6 አጠገብ ያለ ቢሮ)፦' : 'Type the location (example: office next to Ward 6):');
+  }
   if (s.flow === 'register' && s.step === 'department') {
     s.data.department = locName;
     const lang = s.data.language || 'en';
