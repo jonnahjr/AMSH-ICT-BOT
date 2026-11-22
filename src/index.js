@@ -202,9 +202,192 @@ bot.start(async ctx => {
     languageKeyboard()
   );
 });
-bot.command('help', async ctx => ctx.reply('Amanuel Hospital IT Support\n/start - Main menu\n/myid - Show your Telegram ID\n/admin commands: /addtech, /addstorekeeper, /setrole\nFor access, contact the IT administrator.'));
-bot.command('myid', ctx => ctx.reply(`Your Telegram ID: ${ctx.from.id}`));
-bot.command('cancel', ctx => { clearSession(ctx.from.id); return ctx.reply('Current operation cancelled. / አሁኑ ተግባር ተሰርዟል።'); });
+// ─── All shortcut commands ────────────────────────────────────────────────────
+
+bot.command('help', async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  const isAm = langOf(u) === 'am';
+  const lines = isAm ? [
+    '📋 *የ@AMSH_ICT_BOT ትዕዛዞች*',
+    '',
+    '👤 *ለሁሉም ተጠቃሚዎች*',
+    '/start — ዋና ምናሌ / ቋንቋ ምርጫ',
+    '/menu — ዋና ምናሌ ክፈት',
+    '/report — 🔧 የብልሽት ሪፖርት አስገባ',
+    '/status — 📊 የጥያቄ ሁኔታ ፈትሽ',
+    '/mytickets — 📋 ሁሉም ጥያቄዎቼ',
+    '/lang — 🌐 ቋንቋ ቀይር',
+    '/cancel — ❌ አሁኑ ተግባር ሰርዝ',
+    '/myid — 🆔 Telegram ID ያሳይ',
+    '',
+    '🔧 *ለቴክኒሺያኖች*',
+    '/myjobs — የተሰጡኝ ስራዎች',
+    '/tech — ቴክኒሺያን ምናሌ',
+    '',
+    '👨‍💼 *ለአስተዳዳሪዎች (Admins)*',
+    '/admin — አስተዳዳሪ ምናሌ',
+    '/pending — ያልተሰጡ ጥያቄዎች',
+    '/workload — የቴክኒሺያን ስራ ሁኔታ',
+    '/addtech ID ስም ስፔሻላይዜሽን — ቴክ ጨምር',
+    '/addstorekeeper ID ስም — ስቶር ጨምር',
+    '/setrole ID role — ሚና ቀይር',
+    '/deactivate ID — መለያ አቁም',
+  ] : [
+    '📋 *@AMSH_ICT_BOT Commands*',
+    '',
+    '👤 *For All Users*',
+    '/start — Main menu / language selection',
+    '/menu — Open main menu',
+    '/report — 🔧 Submit an equipment failure report',
+    '/status — 📊 Track a request by number',
+    '/mytickets — 📋 View all my requests',
+    '/lang — 🌐 Change language',
+    '/cancel — ❌ Cancel current operation',
+    '/myid — 🆔 Show your Telegram ID',
+    '',
+    '🔧 *For Technicians*',
+    '/myjobs — View assigned jobs',
+    '/tech — Open technician menu',
+    '',
+    '👨‍💼 *For Administrators*',
+    '/admin — Open admin menu',
+    '/pending — View unassigned requests',
+    '/workload — Technician workload overview',
+    '/addtech ID FullName Specialization — Register technician',
+    '/addstorekeeper ID FullName — Register storekeeper',
+    '/setrole ID role — Change user role',
+    '/deactivate ID — Deactivate an account',
+  ];
+  return ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+});
+
+bot.command('myid', ctx => ctx.reply(`🆔 Your Telegram ID: \`${ctx.from.id}\``, { parse_mode: 'Markdown' }));
+
+bot.command('cancel', ctx => {
+  clearSession(ctx.from.id);
+  return ctx.reply('❌ Operation cancelled. / ተግባሩ ተሰርዟል።');
+});
+
+// /menu — open main menu
+bot.command('menu', async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  if (!u) return ctx.reply('Please send /start first. / /start ይላኩ።');
+  return ctx.reply(msg(u, 'welcome'), mainKeyboard(u));
+});
+
+// /report — start failure report
+bot.command('report', async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  if (!u) return ctx.reply('Please send /start first. / /start ይላኩ።');
+  clearSession(ctx.from.id);
+  setSession(ctx.from.id, { flow: 'report', step: 'category', data: {} });
+  const isAm = langOf(u) === 'am';
+  return ctx.reply(isAm ? 'የመሣሪያውን ዓይነት ይምረጡ፦' : 'Select equipment category:', categoryKeyboard(isAm));
+});
+
+// /status or /track — track a request
+bot.command('status', async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  if (!u) return ctx.reply('Please send /start first.');
+  clearSession(ctx.from.id);
+  setSession(ctx.from.id, { flow: 'track', step: 'number' });
+  const isAm = langOf(u) === 'am';
+  return ctx.reply(isAm ? '🔍 የጥያቄ ቁጥርዎን ያስገቡ (ለምሳሌ AMH-IT-20261122-0001)፦' : '🔍 Enter your request number (e.g. AMH-IT-20261122-0001):');
+});
+bot.command('track', async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  if (!u) return ctx.reply('Please send /start first.');
+  clearSession(ctx.from.id);
+  setSession(ctx.from.id, { flow: 'track', step: 'number' });
+  const isAm = langOf(u) === 'am';
+  return ctx.reply(isAm ? '🔍 የጥያቄ ቁጥርዎን ያስገቡ፦' : '🔍 Enter your request number:');
+});
+
+// /mytickets — list user's own requests
+bot.command('mytickets', async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  if (!u) return ctx.reply('Please send /start first.');
+  const rows = await query('SELECT request_no,equipment_name,status,priority,reported_at FROM requests WHERE employee_id=? ORDER BY id DESC LIMIT 10', [u.id]);
+  if (!rows.length) return ctx.reply(msg(u, 'noRequests'));
+  const isAm = langOf(u) === 'am';
+  const header = isAm ? '📋 *የእኔ ጥያቄዎች*\n\n' : '📋 *My Requests*\n\n';
+  const lines = rows.map(r => `${r.request_no}\n${r.equipment_name} | ${STATUS_LABEL[r.status]} | ${r.priority}`);
+  return ctx.reply(header + lines.join('\n\n'), { parse_mode: 'Markdown' });
+});
+
+// /lang — change language
+bot.command('lang', async ctx => {
+  return ctx.reply('Choose language / ቋንቋ ይምረጡ፦', languageKeyboard());
+});
+
+// /tech — technician menu shortcut
+bot.command('tech', async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  if (!isTech(u) && !isAdmin(u)) return ctx.reply(msg(u, 'techOnly'));
+  const rows = await query(
+    "SELECT request_no,equipment_name,equipment_type,status,priority FROM requests WHERE assigned_technician_id=? AND status IN ('assigned','accepted','in_progress','waiting_parts') ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END,reported_at ASC LIMIT 15",
+    [u.id]
+  );
+  if (!rows.length) return ctx.reply(msg(u, 'noJobs'));
+  for (const r of rows)
+    await ctx.reply(`${r.request_no}\n${r.equipment_name} (${r.equipment_type})\n${STATUS_LABEL[r.status]} | ${r.priority}`,
+      Markup.inlineKeyboard([[Markup.button.callback('Open / ክፈት', `techopen:${r.request_no}`)]]) );
+});
+
+// /myjobs — alias of /tech
+bot.command('myjobs', async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  if (!isTech(u) && !isAdmin(u)) return ctx.reply(msg(u, 'techOnly'));
+  const rows = await query(
+    "SELECT request_no,equipment_name,equipment_type,status,priority FROM requests WHERE assigned_technician_id=? AND status IN ('assigned','accepted','in_progress','waiting_parts') ORDER BY reported_at ASC LIMIT 15",
+    [u.id]
+  );
+  if (!rows.length) return ctx.reply(msg(u, 'noJobs'));
+  for (const r of rows)
+    await ctx.reply(`${r.request_no}\n${r.equipment_name} (${r.equipment_type})\n${STATUS_LABEL[r.status]} | ${r.priority}`,
+      Markup.inlineKeyboard([[Markup.button.callback('Open / ክፈት', `techopen:${r.request_no}`)]]) );
+});
+
+// /admin — admin menu shortcut
+bot.command('admin', async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  if (!isAdmin(u)) return ctx.reply(msg(u, 'adminOnly'));
+  return ctx.reply(msg(u, 'adminMenu'), Markup.inlineKeyboard([
+    [Markup.button.callback(msg(u, 'adminPending'), 'admin:pending')],
+    [Markup.button.callback(msg(u, 'adminAll'), 'admin:recent')],
+    [Markup.button.callback(msg(u, 'adminTechs'), 'admin:workload')]
+  ]));
+});
+
+// /pending — unassigned requests (admin)
+bot.command('pending', async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  if (!isAdmin(u)) return ctx.reply(msg(u, 'adminOnly'));
+  const rows = await query("SELECT request_no,equipment_name,equipment_type,priority FROM requests WHERE status='pending' ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END,reported_at ASC LIMIT 20");
+  if (!rows.length) return ctx.reply('✅ No pending requests.');
+  for (const r of rows)
+    await ctx.reply(`${r.request_no}\n${r.equipment_name} (${r.equipment_type})\nPriority: ${r.priority}`,
+      Markup.inlineKeyboard([[Markup.button.callback('Auto-assign', 'admin:retry:' + r.request_no)]]));
+});
+
+// /workload — technician workload (admin)
+bot.command('workload', async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  if (!isAdmin(u)) return ctx.reply(msg(u, 'adminOnly'));
+  const rows = await query("SELECT u.full_name,u.specialization,COUNT(r.id) AS jobs FROM users u LEFT JOIN requests r ON r.assigned_technician_id=u.id AND r.status IN ('assigned','accepted','in_progress','waiting_parts') WHERE u.role='technician' AND u.is_active=TRUE GROUP BY u.id ORDER BY jobs");
+  return ctx.reply(rows.length ? rows.map(r => `${r.full_name} (${r.specialization||'—'}): ${r.jobs} open`).join('\n') : 'No active technicians.');
+});
+
+// /store — storekeeper menu shortcut
+bot.command('store', async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  if (!isStore(u) && !isAdmin(u)) return ctx.reply(msg(u, 'storeOnly'));
+  return ctx.reply(msg(u, 'storeMenu'), Markup.inlineKeyboard([
+    [Markup.button.callback(msg(u, 'storeAdd'), 'store:add')],
+    [Markup.button.callback(msg(u, 'storeIssue'), 'store:issue')],
+    [Markup.button.callback(msg(u, 'storeView'), 'store:view')]
+  ]));
+});
 
 // Administrator provisioning commands. Use Telegram numeric IDs; never share the bot token.
 bot.command('addtech', async ctx => {
@@ -528,6 +711,24 @@ bot.catch((err,ctx)=>{ console.error('Bot error:',err); if(ctx) ctx.reply('An er
     await initTablesIfMissing();
     await pool.query('SELECT 1');
     await ensureAdminUsers();
+    // Register command list with Telegram (shows in the / menu inside the app)
+    await bot.telegram.setMyCommands([
+      { command: 'start',      description: 'Main menu / ዋና ምናሌ' },
+      { command: 'menu',       description: 'Open main menu / ምናሌ ክፈት' },
+      { command: 'report',     description: '🔧 Report equipment failure / ብልሽት ሪፖርት' },
+      { command: 'status',     description: '📊 Track a request / ሁኔታ ፈትሽ' },
+      { command: 'mytickets',  description: '📋 My submitted requests / ጥያቄዎቼ' },
+      { command: 'lang',       description: '🌐 Change language / ቋንቋ ቀይር' },
+      { command: 'myjobs',     description: '🔧 Technician: my assigned jobs' },
+      { command: 'tech',       description: '🔧 Technician menu' },
+      { command: 'admin',      description: '👨‍💼 Admin menu' },
+      { command: 'pending',    description: '📌 Admin: unassigned requests' },
+      { command: 'workload',   description: '📈 Admin: technician workload' },
+      { command: 'store',      description: '📦 Storekeeper menu' },
+      { command: 'cancel',     description: '❌ Cancel current operation / ሰርዝ' },
+      { command: 'myid',       description: '🆔 Show your Telegram ID' },
+      { command: 'help',       description: '📋 Show all commands / ሁሉም ትዕዛዞች' },
+    ]);
     await bot.launch();
     console.log('Amanuel Hospital IT Support Bot is running.');
   }
