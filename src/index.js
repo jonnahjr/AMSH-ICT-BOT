@@ -465,19 +465,6 @@ bot.command('help', async ctx => {
     '/lang — 🌐 ቋንቋ ቀይር',
     '/cancel — ❌ አሁኑ ተግባር ሰርዝ',
     '/myid — 🆔 Telegram ID ያሳይ',
-    '',
-    '🔧 *ለቴክኒሺያኖች*',
-    '/myjobs — የተሰጡኝ ስራዎች',
-    '/tech — ቴክኒሺያን ምናሌ',
-    '',
-    '👨‍💼 *ለአስተዳዳሪዎች (Admins)*',
-    '/admin — አስተዳዳሪ ምናሌ',
-    '/pending — ያልተሰጡ ጥያቄዎች',
-    '/workload — የቴክኒሺያን ስራ ሁኔታ',
-    '/addtech ID ስም ስፔሻላይዜሽን — ቴክ ጨምር',
-    '/addstorekeeper ID ስም — ስቶር ጨምር',
-    '/setrole ID role — ሚና ቀይር',
-    '/deactivate ID — መለያ አቁም',
   ] : [
     '📋 *@AMSH_ICT_BOT Commands*',
     '',
@@ -490,20 +477,17 @@ bot.command('help', async ctx => {
     '/lang — 🌐 Change language',
     '/cancel — ❌ Cancel current operation',
     '/myid — 🆔 Show your Telegram ID',
-    '',
-    '🔧 *For Technicians*',
-    '/myjobs — View assigned jobs',
-    '/tech — Open technician menu',
-    '',
-    '👨‍💼 *For Administrators*',
-    '/admin — Open admin menu',
-    '/pending — View unassigned requests',
-    '/workload — Technician workload overview',
-    '/addtech ID FullName Specialization — Register technician',
-    '/addstorekeeper ID FullName — Register storekeeper',
-    '/setrole ID role — Change user role',
-    '/deactivate ID — Deactivate an account',
   ];
+  // Only the roles that can use the extra commands see them.
+  if (isTech(u) || isAdmin(u)) lines.push('', isAm ? '🔧 *ለቴክኒሺያኖች*' : '🔧 *For Technicians*', isAm ? '/myjobs — የተሰጡኝ ስራዎች' : '/myjobs — View assigned jobs', isAm ? '/tech — ቴክኒሺያን ምናሌ' : '/tech — Open technician menu');
+  if (isAdmin(u)) lines.push('', isAm ? '👨‍💼 *ለአስተዳዳሪዎች (Admins)*' : '👨‍💼 *For Administrators*',
+    isAm ? '/admin — አስተዳዳሪ ምናሌ' : '/admin — Open admin menu',
+    isAm ? '/pending — ያልተሰጡ ጥያቄዎች' : '/pending — View unassigned requests',
+    isAm ? '/workload — የቴክኒሺያን ስራ ሁኔታ' : '/workload — Technician workload overview',
+    isAm ? '/addtech ID ስም ስፔሻላይዜሽን — ቴክ ጨምር' : '/addtech ID FullName Specialization — Register technician',
+    isAm ? '/addstorekeeper ID ስም — ስቶር ጨምር' : '/addstorekeeper ID FullName — Register storekeeper',
+    isAm ? '/setrole ID role — ሚና ቀይር' : '/setrole ID role — Change user role',
+    isAm ? '/deactivate ID — መለያ አቁም' : '/deactivate ID — Deactivate an account');
   return ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
 });
 
