@@ -299,23 +299,82 @@ async function registerUser(ctx, data) {
   return one('SELECT * FROM users WHERE telegram_id=?',[tg]);
 }
 
-async function autoAssign(requestId, equipmentType) {
-  const words = equipmentType.toLowerCase();
-  let patterns = [];
-  if (/printer|scanner/.test(words)) patterns = ['printer','electronics','computer'];
-  else if (/desktop|computer|laptop/.test(words)) patterns = ['computer','hardware','electronics'];
-  else if (/network/.test(words)) patterns = ['network','system'];
-  else if (/cctv/.test(words)) patterns = ['cctv','electronics','network'];
-  else if (/ups|electronics/.test(words)) patterns = ['electronics','hardware'];
-  let candidates = [];
-  if (patterns.length) {
-    const clauses = patterns.map(()=> 'LOWER(specialization) LIKE ?').join(' OR ');
-    candidates = await query(`SELECT u.id,u.telegram_id,u.full_name,u.specialization, COUNT(r.id) AS open_jobs FROM users u LEFT JOIN requests r ON r.assigned_technician_id=u.id AND r.status IN ('assigned','accepted','in_progress','waiting_parts') WHERE u.role='technician' AND u.is_active=TRUE AND (${clauses}) GROUP BY u.id ORDER BY open_jobs ASC,u.id ASC`, patterns.map(p=>`%${p}%`));
+// ---- automatic technician routing ------------------------------------------------
+// Failures are read automatically and sent to the right technician:
+//   system / EMR / Dagu problems  -> Mikiyas
+//   computer hardware failures    -> Yonas
+//   computer software failures    -> Tesfaye
+// When hardware and software cannot be told apart, Yonas and Tesfaye share the load.
+// Anything else keeps the old specialization matching (printer, CCTV, network, ...).
+const SYSTEM_FAILURE = /\b(emr|dagu|his|hmis)\b|health ?information system|ኢኤምአር|ዳጉ/;
+const GENERIC_SYSTEM = /\bsystem\b|ሲስተም|ስርዓት/;
+const OPERATING_SYSTEM = /operating system|\bos\b|windows/;
+const HARDWARE_FAILURE = /hardware|hard ?disk|hdd|ssd|ram|memory|motherboard|processor|cpu|power|charger|adapter|battery|boot|bios|screen|monitor|display|keyboard|mouse|lcd|fan|overheat|usb|port|cable|beep|physical|damaged|broken|dead|not turning on|no power|system unit/gi;
+const SOFTWARE_FAILURE = /software|windows|driver|virus|malware|antivirus|update|upgrade|install|application|app\b|program|office|excel|word|outlook|email|login|password|account|slow|freezing|hang|error|corrupt|blue screen|reinstall|format/gi;
+// The report buttons are bilingual, so the same analysis has to read Amharic too.
+const OPERATING_SYSTEM_AM = /ዊንዶውስ/;
+const HARDWARE_FAILURE_AM = /ሃርድዌር|ሃርድ ዲስክ|ዲስክ|አይበራም|ሞቷል|ኃይል|ባትሪ|አዳፕተር|ሙቀት|ድምፅ|መዳፊት|ቁልፍ ሰሌዳ|ምስል አያሳይም|ጥቁር|ወደብ|ይጠፋል/g;
+const SOFTWARE_FAILURE_AM = /ሶፍትዌር|ቫይረስ|ዊንዶውስ|ቀዘቀዘ|ይዘገያል|ወደቀ|አልተጫነም|ፕሮግራም|አፕሊኬሽን|ፓስወርድ|ሎጊን|አይከፈትም/g;
+
+// All text a technician would look at before deciding what is wrong.
+function failureText(info) {
+  if (!info) return '';
+  if (typeof info === 'string') return info.toLowerCase();
+  return [info.equipment_type, info.equipment_name, info.model, info.problem_description, info.problem]
+    .filter(Boolean).join(' ').toLowerCase();
+}
+
+function classifyFailure(text, equipmentType = '') {
+  if (!text) return null;
+  if (/\bsystem unit\b/.test(text)) return { names: ['Yonas'], specializations: ['hardware'], why: 'computer hardware failure (system unit)' };
+  // "Operating system" is a computer software failure, not the EMR system.
+  const operatingSystemMentioned = OPERATING_SYSTEM.test(text) || OPERATING_SYSTEM_AM.test(text) || /computer system/.test(text);
+  if (SYSTEM_FAILURE.test(text) || (GENERIC_SYSTEM.test(text) && !operatingSystemMentioned)) return { names: ['Mikiyas'], specializations: ['system', 'emr', 'software'], why: 'system / EMR / Dagu issue' };
+  // Printers, scanners, CCTV, UPS, projectors and network gear keep the category rules below.
+  if (equipmentType && !/computer|laptop|desktop|\bpc\b/i.test(equipmentType)) return null;
+  const hardware = (text.match(HARDWARE_FAILURE) || []).length + (text.match(HARDWARE_FAILURE_AM) || []).length;
+  const software = (text.match(SOFTWARE_FAILURE) || []).length + (text.match(SOFTWARE_FAILURE_AM) || []).length;
+  if (hardware > software) return { names: ['Yonas'], specializations: ['hardware'], why: 'computer hardware failure' };
+  if (software > hardware) return { names: ['Tesfaye'], specializations: ['software'], why: 'computer software failure' };
+  if (hardware || software) return { names: ['Yonas', 'Tesfaye'], specializations: ['hardware', 'software'], why: 'computer maintenance (hardware/software unclear)' };
+  if (/computer|laptop|desktop|\bpc\b/.test(text)) return { names: ['Yonas', 'Tesfaye'], specializations: ['hardware', 'software'], why: 'computer maintenance (reason not clear from the report)' };
+  return null;
+}
+
+// Old category-based fallback, used when the text says nothing specific.
+function categoryPatterns(text) {
+  if (/printer|scanner/.test(text)) return ['printer', 'electronics', 'computer'];
+  if (/desktop|computer|laptop/.test(text)) return ['computer', 'hardware', 'electronics'];
+  if (/network/.test(text)) return ['network', 'system'];
+  if (/cctv/.test(text)) return ['cctv', 'electronics', 'network'];
+  if (/ups|electronics/.test(text)) return ['electronics', 'hardware'];
+  return [];
+}
+
+// Least-loaded active technician, first by name (the hospital's routing rule) and then by specialization.
+async function pickTechnician(names, patterns) {
+  const base = "SELECT u.id,u.telegram_id,u.full_name,u.specialization, COUNT(r.id) AS open_jobs FROM users u LEFT JOIN requests r ON r.assigned_technician_id=u.id AND r.status IN ('assigned','accepted','in_progress','waiting_parts') WHERE u.role='technician' AND u.is_active=TRUE";
+  const order = 'GROUP BY u.id ORDER BY open_jobs ASC,u.id ASC';
+  if (names.length) {
+    const rows = await query(`${base} AND (${names.map(() => 'LOWER(u.full_name) LIKE ?').join(' OR ')}) ${order}`, names.map(n => `%${n.toLowerCase()}%`));
+    if (rows.length) return rows[0];
   }
-  if (!candidates.length) return null;
-  const chosen = candidates[0];
+  if (patterns.length) {
+    const rows = await query(`${base} AND (${patterns.map(() => 'LOWER(u.specialization) LIKE ?').join(' OR ')}) ${order}`, patterns.map(p => `%${p}%`));
+    if (rows.length) return rows[0];
+  }
+  return null;
+}
+
+async function autoAssign(requestId, info) {
+  const text = failureText(info);
+  const segment = typeof info === 'string' ? info : (info.equipment_type || '');
+  const route = classifyFailure(text, segment);
+  const chosen = await pickTechnician(route ? route.names : [], route ? route.specializations : categoryPatterns(text));
+  if (!chosen) return null;
   await query("UPDATE requests SET assigned_technician_id=?,status='assigned',assigned_at=NOW() WHERE id=? AND status='pending'",[chosen.id,requestId]);
-  await query("INSERT INTO maintenance_activities(request_id,actor_user_id,activity_type,notes) VALUES(?,?,'auto_assigned',?)",[requestId,chosen.id,`Automatically assigned by specialization and lowest open workload (${chosen.specialization || 'unspecified'}).`]);
+  const reason = route ? route.why : `specialization match (${chosen.specialization || 'unspecified'})`;
+  await query("INSERT INTO maintenance_activities(request_id,actor_user_id,activity_type,notes) VALUES(?,?,'auto_assigned',?)",[requestId,chosen.id,`Automatically assigned by failure analysis: ${reason}; technician ${chosen.full_name}${chosen.specialization ? ` (${chosen.specialization})` : ''}.`]);
   return chosen;
 }
 async function notifyAdmins(text, photoFileId) {
@@ -812,7 +871,7 @@ bot.action('main:admin', async ctx => { const u=await userByTelegram(ctx.from.id
   ]));
 });
 bot.action('admin:pending', async ctx => { const u=await userByTelegram(ctx.from.id); if(!isAdmin(u)) return ctx.answerCbQuery(); const rows=await query("SELECT request_no,equipment_name,equipment_type,priority FROM requests WHERE status='pending' ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END,reported_at ASC LIMIT 20"); await ctx.answerCbQuery(); if(!rows.length) return ctx.reply('No pending requests.'); for(const r of rows) await ctx.reply(`${r.request_no}\n${r.equipment_name} (${r.equipment_type})\nPriority: ${r.priority}`,Markup.inlineKeyboard([[Markup.button.callback('Retry auto-assign','admin:retry:'+r.request_no)]])); });
-bot.action(/^admin:retry:(.+)$/, async ctx => { const u=await userByTelegram(ctx.from.id); if(!isAdmin(u)) return ctx.answerCbQuery(); const r=await getRequestByNo(ctx.match[1]); if(!r) return ctx.answerCbQuery('Not found'); const tech=await autoAssign(r.id,r.equipment_type); await ctx.answerCbQuery(tech?'Assigned':'No suitable technician'); if(tech) { await bot.telegram.sendMessage(tech.telegram_id,`${msg(u,'assigned')}\n${r.request_no} – ${r.equipment_name}`); await ctx.reply(`Assigned to ${tech.full_name}.`); } else await ctx.reply(msg(u,'noTech')); });
+bot.action(/^admin:retry:(.+)$/, async ctx => { const u=await userByTelegram(ctx.from.id); if(!isAdmin(u)) return ctx.answerCbQuery(); const r=await getRequestByNo(ctx.match[1]); if(!r) return ctx.answerCbQuery('Not found'); const tech=await autoAssign(r.id,r); await ctx.answerCbQuery(tech?'Assigned':'No suitable technician'); if(tech) { await bot.telegram.sendMessage(tech.telegram_id,`${msg(u,'assigned')}\n${r.request_no} – ${r.equipment_name}`); await ctx.reply(`Assigned to ${tech.full_name}.`); } else await ctx.reply(msg(u,'noTech')); });
 bot.action('admin:recent', async ctx => { const u=await userByTelegram(ctx.from.id); if(!isAdmin(u)) return ctx.answerCbQuery(); const rows=await query('SELECT request_no,equipment_name,status,priority FROM requests ORDER BY id DESC LIMIT 15'); await ctx.answerCbQuery(); return ctx.reply(rows.length?rows.map(r=>`${r.request_no} | ${r.equipment_name} | ${STATUS_LABEL[r.status]} | ${r.priority}`).join('\n'):'No requests yet.'); });
 bot.action('admin:workload', async ctx => { const u=await userByTelegram(ctx.from.id); if(!isAdmin(u)) return ctx.answerCbQuery(); const rows=await query("SELECT u.full_name,u.specialization,COUNT(r.id) AS jobs FROM users u LEFT JOIN requests r ON r.assigned_technician_id=u.id AND r.status IN ('assigned','accepted','in_progress','waiting_parts') WHERE u.role='technician' AND u.is_active=TRUE GROUP BY u.id ORDER BY jobs"); await ctx.answerCbQuery(); return ctx.reply(rows.length?rows.map(r=>`${r.full_name} (${r.specialization||'Unspecified'}): ${r.jobs} open jobs`).join('\n'):'No active technicians.'); });
 
@@ -850,13 +909,16 @@ bot.action('report:submit', async ctx => {
     console.error('Report submit failed:', err);
     return ctx.reply(`⚠️ Your report could not be saved: ${err.message}\nሪፖርቱን ማስቀመጥ አልተቻለም።\n\nPlease send /report and try again, or contact IT administration.`);
   }
-  let assigned=null; try { assigned=await autoAssign(result.insertId,d.equipment_type); } catch(err) { console.error('Auto-assign failed:', err.message); }
+  let assigned=null; try { assigned=await autoAssign(result.insertId,d); } catch(err) { console.error('Auto-assign failed:', err.message); }
   const r=await getRequestByNo(requestNo);
   clearSession(ctx.from.id); await ctx.reply(`${msg(u,'submitted')} ${requestNo}${assigned?`\nAssigned technician: ${assigned.full_name}`:''}`);
   if(assigned) { try { await bot.telegram.sendMessage(assigned.telegram_id,`${msg(u,'assigned')}\n${requestNo}\n${d.equipment_name} (${d.equipment_type})\nPriority: ${d.priority}\nLocation: ${d.room}`); if(d.photo) await bot.telegram.sendPhoto(assigned.telegram_id,d.photo,{caption:`Evidence for ${requestNo}`}); } catch(e){} }
+  // Tell the admins what the automatic failure analysis decided, even when nobody could be assigned.
+  const route = assigned ? null : classifyFailure(failureText(d), d.equipment_type);
+  const analysis = route ? `\n\n🤖 Failure analysis / የችግር ትንተና: ${route.why}\n➡️ ${route.names.join(' / ')} — no active technician matched, please assign manually / በእጅ ይመድቡ` : '';
   if(r) await notifyAdmins(requestCard(r, assigned
     ? '🆕 New IT request — assigned / አዲስ ጥያቄ — ተመድቧል'
-    : '🆕 New IT request — needs assignment / አዲስ ጥያቄ — ምዝገባ ያስፈልገዋል'), r.attachment_file_id||null);
+    : '🆕 New IT request — needs assignment / አዲስ ጥያቄ — ምዝገባ ያስፈልገዋል') + analysis, r.attachment_file_id||null);
   const file=path.join(reportDir,`${requestNo}-request.pdf`); await generateRequestPdf(r,u,file,assigned); await ctx.replyWithDocument({source:file,filename:`${requestNo}.pdf`}); await ctx.reply('Main menu / ዋና ምናሌ',mainKeyboard(u));
 });
 bot.action('report:cancel', async ctx => { clearSession(ctx.from.id); await ctx.answerCbQuery(); return ctx.reply('Report cancelled. / ሪፖርቱ ተሰርዟል።'); });
