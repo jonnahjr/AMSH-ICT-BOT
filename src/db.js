@@ -85,7 +85,7 @@ async function initTablesIfMissing() {
       department VARCHAR(160) NULL,
       role VARCHAR(30) NOT NULL DEFAULT 'employee',
       specialization VARCHAR(120) NULL,
-      is_active SMALLINT NOT NULL DEFAULT 1,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
       language VARCHAR(10) NOT NULL DEFAULT 'en',
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
@@ -154,6 +154,30 @@ async function initTablesIfMissing() {
       entity_id BIGINT NULL,
       details TEXT NULL,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  // Older installs created users.is_active as SMALLINT while the code compares it to TRUE/FALSE,
+  // which makes every user write fail. Convert it in place.
+  await pool.query(`
+    DO $$ BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'users'
+          AND column_name = 'is_active' AND data_type = 'smallint'
+      ) THEN
+        ALTER TABLE users ALTER COLUMN is_active DROP DEFAULT;
+        ALTER TABLE users ALTER COLUMN is_active TYPE BOOLEAN USING (is_active <> 0);
+        ALTER TABLE users ALTER COLUMN is_active SET DEFAULT TRUE;
+      END IF;
+    END $$;
+  `);
+  // Bot conversation state, so an in-progress report survives a restart/redeploy.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bot_sessions (
+      id BIGSERIAL PRIMARY KEY,
+      telegram_id BIGINT NOT NULL UNIQUE,
+      data TEXT NOT NULL,
+      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
   `);
 }

@@ -2,7 +2,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { Telegraf, Markup } = require('telegraf');
-const { query, one, log, pool, initTablesIfMissing } = require('./db');
+const { query, one, log, pool, isPg, initTablesIfMissing } = require('./db');
 const { t } = require('./i18n');
 const { generateRequestPdf } = require('./pdf');
 
@@ -28,17 +28,98 @@ const DEVICE_MODELS = {
   7: ['Projector / ፕሮጀክተር','Photocopier / ፎቶኮፒ','TV Screen / ማሳያ','Sound System / ድምጽ','Other Device / ሌላ']
 };
 
-const COMMON_PROBLEMS = [
-  { en: "🔴 Won't power on", am: '🔴 አይበራም' },
-  { en: '🖥️ No display / Black screen', am: '🖥️ ምስል አያሳይም' },
-  { en: '🔵 Windows error / Crash', am: '🔵 የዊንዶውስ ስህተት' },
-  { en: '🐢 Very slow / Freezing', am: '🐢 በጣም ይዘገያል' },
-  { en: '🌐 No Internet / Network drop', am: '🌐 ኔትወርክ የለም' },
-  { en: '📄 Paper jam / Print error', am: '📄 ወረቀት ይይዛል' },
-  { en: '🔊 Strange noise / Overheating', am: '🔊 ያልተለመደ ድምፅ' },
-  { en: '⚡ Battery / Power failure', am: '⚡ ኃይል አይይዝም' },
-  { en: '❓ Other issue', am: '❓ ሌላ ችግር' }
-];
+const PROBLEMS_BY_CATEGORY = {
+  // 0 — Desktop computer
+  0: [
+    { en: "🔴 Won't power on / Dead", am: '🔴 አይበራም / ሞቷል' },
+    { en: '🖥️ No display / Black screen', am: '🖥️ ምስል አያሳይም / ጥቁር ማያ' },
+    { en: '🔵 Windows error / Blue screen', am: '🔵 የዊንዶውስ ስህተት / ሰማያዊ' },
+    { en: '🐢 Very slow / Freezing', am: '🐢 በጣም ይዘገያል / ቀዘቀዘ' },
+    { en: '🌐 No Internet / Network', am: '🌐 ኔትወርክ / ኢንተርኔት የለም' },
+    { en: '🔊 Strange noise / Overheating', am: '🔊 ያልተለመደ ድምፅ / ሙቀት' },
+    { en: '💾 Hard disk / Storage error', am: '💾 ሃርድ ዲስክ ስህተት' },
+    { en: '🖱️ Mouse / Keyboard not working', am: '🖱️ መዳፊት / ቁልፍ ሰሌዳ አይሰራም' },
+    { en: '⚡ Sudden shutdown / Power issue', am: '⚡ ድንገት ይጠፋል / ኃይል' },
+    { en: '❓ Other desktop issue', am: '❓ ሌላ ችግር' },
+  ],
+  // 1 — Laptop
+  1: [
+    { en: "🔴 Won't power on / Dead", am: '🔴 አይበራም / ሞቷል' },
+    { en: '🖥️ No display / Dim screen', am: '🖥️ ምስል አያሳይም / ጨለማ' },
+    { en: '🔵 Windows error / Crash', am: '🔵 የዊንዶውስ ስህተት / ወደቀ' },
+    { en: '🐢 Very slow / Freezing', am: '🐢 በጣም ይዘገያል / ቀዘቀዘ' },
+    { en: '🔋 Battery drains fast / No charge', am: '🔋 ባትሪ ፈጠን ያልቃል / አይሞላም' },
+    { en: '🌐 No Wi-Fi / Network', am: '🌐 Wi-Fi / ኔትወርክ የለም' },
+    { en: '🔊 Overheating / Strange noise', am: '🔊 ሙቀት / ያልተለመደ ድምፅ' },
+    { en: '⌨️ Keyboard / Touchpad broken', am: '⌨️ ቁልፍ ሰሌዳ / ቶቻፓድ አይሰራም' },
+    { en: '🔌 Charging port / Adapter issue', am: '🔌 የኃይል ወደብ / አዳፕተር ችግር' },
+    { en: '❓ Other laptop issue', am: '❓ ሌላ ችግር' },
+  ],
+  // 2 — Printer
+  2: [
+    { en: '📄 Paper jam', am: '📄 ወረቀት ይይዛል' },
+    { en: '🖨️ Not printing / Offline', am: '🖨️ አያትምም / ኦፍላይን' },
+    { en: '🎨 Faded / Streaky print quality', am: '🎨 ደብዛዛ / ሸሸ ህትመት' },
+    { en: '🖥️ Printer not detected by PC', am: '🖥️ ፕሪንተር አልታወቀም' },
+    { en: '💧 Ink / Toner empty or low', am: '💧 ቀለም ጨርሷል / ቀነሰ' },
+    { en: "🔴 Won't power on", am: '🔴 አይበራም' },
+    { en: '🌐 Network / Wi-Fi printing error', am: '🌐 ኔትወርክ ህትመት ስህተት' },
+    { en: '🔊 Strange noise while printing', am: '🔊 ሲያትም ያልተለምደ ድምፅ' },
+    { en: '❓ Other printer issue', am: '❓ ሌላ ችግር' },
+  ],
+  // 3 — Scanner
+  3: [
+    { en: "🔴 Won't power on", am: '🔴 አይበራም' },
+    { en: '📷 Not scanning / No response', am: '📷 አይስካንም / ምላሽ የለም' },
+    { en: '🖥️ Scanner not detected by PC', am: '🖥️ ስካነር አልታወቀም' },
+    { en: '🌫️ Blurry / Poor scan quality', am: '🌫️ ደብዛዛ / ዝቅተኛ ጥራት' },
+    { en: '📄 Paper jam / Feed error', am: '📄 ወረቀት ይይዛል / ፊድ ስህተት' },
+    { en: '🔌 USB / Cable connection issue', am: '🔌 USB / ኬብል ችግር' },
+    { en: '❓ Other scanner issue', am: '❓ ሌላ ችግር' },
+  ],
+  // 4 — UPS / Power
+  4: [
+    { en: "🔴 UPS won't turn on", am: '🔴 UPS አይበራም' },
+    { en: '🔋 Battery not holding charge', am: '🔋 ባትሪ ኃይል አያስቀምጥም' },
+    { en: '⚡ No power output / No backup', am: '⚡ ኃይል አይሰጥም / ምትክ የለም' },
+    { en: '🔊 Beeping continuously', am: '🔊 ደጋግሞ ድምፅ ያሰማል' },
+    { en: '💡 Overload alarm / Fault light', am: '💡 ከመጠን ማሳሰቢያ / ቀይ ብርሃን' },
+    { en: '🌡️ Overheating', am: '🌡️ ሙቀት' },
+    { en: '❓ Other UPS issue', am: '❓ ሌላ ችግር' },
+  ],
+  // 5 — CCTV
+  5: [
+    { en: "🔴 Camera won't power on", am: '🔴 ካሜራ አይበራም' },
+    { en: '📷 No video / Black screen on monitor', am: '📷 ምስል የለም / ጥቁር ማያ' },
+    { en: '🌫️ Blurry / Poor image quality', am: '🌫️ ደብዛዛ / ዝቅተኛ ጥራት' },
+    { en: '🌐 Camera offline / Not connecting', am: '🌐 ካሜራ ኦፍላይን / አይገናኝም' },
+    { en: '💾 DVR/NVR not recording', am: '💾 DVR/NVR አይቀዳም' },
+    { en: '🔊 Alarm / Alert not working', am: '🔊 ማሳሰቢያ አይሰራም' },
+    { en: '📡 Loose cable / No signal', am: '📡 ኬብል ቀላ / ምልክት የለም' },
+    { en: '❓ Other CCTV issue', am: '❓ ሌላ ችግር' },
+  ],
+  // 6 — Network equipment
+  6: [
+    { en: '🌐 No internet / All users affected', am: '🌐 ኢንተርኔት የለም / ሁሉም' },
+    { en: '📶 Slow internet / Wi-Fi weak', am: '📶 ቀስ ኢንተርኔት / Wi-Fi ደካማ' },
+    { en: '🔌 Switch / Router not responding', am: '🔌 ስዊች / ራውተር አይሰራም' },
+    { en: '💡 Link light off / Port dead', am: '💡 ፖርት ምልክት የለም / ሞቷል' },
+    { en: "🔴 Router / Switch won't power on", am: '🔴 ራውተር / ስዊች አይበራም' },
+    { en: '🔊 Overheating device', am: '🔊 መሣሪያ ሙቀት' },
+    { en: '📡 Cable disconnected / Damaged', am: '📡 ኬብል ተቋርጧል / ተበሳ' },
+    { en: '❓ Other network issue', am: '❓ ሌላ ችግር' },
+  ],
+  // 7 — Other electronics (projector, photocopier, TV, sound)
+  7: [
+    { en: "🔴 Won't power on", am: '🔴 አይበራም' },
+    { en: '🖥️ No display / No output', am: '🖥️ ምስል / ውጤት የለም' },
+    { en: '🔊 No sound / Distorted audio', am: '🔊 ድምፅ የለም / ተበሳ' },
+    { en: '🌐 Connection / Signal issue', am: '🌐 ግንኙነት / ምልክት ችግር' },
+    { en: '🔥 Overheating', am: '🔥 ሙቀት' },
+    { en: '📄 Paper jam (photocopier)', am: '📄 ወረቀት ይይዛል (ፎቶኮፒ)' },
+    { en: '❓ Other device issue', am: '❓ ሌላ ችግር' },
+  ],
+};
 
 const HOSPITAL_LOCATIONS = [
   { en: '🏥 OPD / Clinics', am: '🏥 የተመላላሽ (OPD)' },
@@ -73,18 +154,32 @@ function modelKeyboard(catIdx, isAm) {
   return Markup.inlineKeyboard(rows);
 }
 
-function problemKeyboard(isAm) {
+function problemKeyboard(isAm, catIdx) {
+  const list = PROBLEMS_BY_CATEGORY[catIdx] || PROBLEMS_BY_CATEGORY[7];
   const rows = [];
-  for (let i = 0; i < COMMON_PROBLEMS.length; i += 2) {
-    const p1 = COMMON_PROBLEMS[i];
-    const row = [Markup.button.callback(isAm ? p1.am : p1.en, `repprob:${i}`)];
-    if (COMMON_PROBLEMS[i + 1]) {
-      const p2 = COMMON_PROBLEMS[i + 1];
-      row.push(Markup.button.callback(isAm ? p2.am : p2.en, `repprob:${i + 1}`));
+  for (let i = 0; i < list.length; i += 2) {
+    const p1 = list[i];
+    const row = [Markup.button.callback(isAm ? p1.am : p1.en, `repprob:${catIdx}:${i}`)];
+    if (list[i + 1]) {
+      const p2 = list[i + 1];
+      row.push(Markup.button.callback(isAm ? p2.am : p2.en, `repprob:${catIdx}:${i + 1}`));
     }
     rows.push(row);
   }
   return Markup.inlineKeyboard(rows);
+}
+
+// Category chosen in the current report is authoritative for model and problem lists.
+function reportCatIdx(s) {
+  const i = s?.data?.catIdx;
+  return Number.isInteger(i) && i >= 0 && i < CATEGORIES.length ? i : 7;
+}
+
+function problemPrompt(isAm, catIdx) {
+  const category = CATEGORIES[reportCatIdx({ data: { catIdx } })];
+  return isAm
+    ? `${category} — የብልሽቱን ዓይነት ይምረጡ (ወይም ይጻፉ)፦`
+    : `${category} — select or describe the problem:`;
 }
 
 function locationKeyboard(isAm) {
@@ -118,8 +213,29 @@ function photoKeyboard(isAm) {
 const PRIORITIES = ['low','medium','high','critical'];
 const STATUS_LABEL = { pending:'Pending', assigned:'Assigned', accepted:'Accepted', in_progress:'In progress', waiting_parts:'Waiting for parts', completed:'Completed', unresolved:'Unresolved', cancelled:'Cancelled' };
 const getSession = id => sessions.get(id) || {};
-const setSession = (id, value) => sessions.set(id, value);
-const clearSession = id => sessions.delete(id);
+const setSession = (id, value) => { sessions.set(id, value); persistSession(id, value); };
+const clearSession = id => { sessions.delete(id); query('DELETE FROM bot_sessions WHERE telegram_id=?', [id]).catch(() => {}); };
+async function persistSession(id, value) {
+  try {
+    const sql = isPg
+      ? 'INSERT INTO bot_sessions(telegram_id,data,updated_at) VALUES(?,?,CURRENT_TIMESTAMP) ON CONFLICT (telegram_id) DO UPDATE SET data=EXCLUDED.data,updated_at=CURRENT_TIMESTAMP'
+      : 'INSERT INTO bot_sessions(telegram_id,data,updated_at) VALUES(?,?,CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE data=VALUES(data),updated_at=CURRENT_TIMESTAMP';
+    await query(sql, [id, JSON.stringify(value)]);
+  } catch (e) { console.warn('Session save failed:', e.message); }
+}
+// Restore an in-progress conversation after a restart, so Submit never dead-ends.
+bot.use(async (ctx, next) => {
+  const id = ctx.from && ctx.from.id;
+  if (id && !sessions.has(id)) {
+    try {
+      const row = await one('SELECT data,updated_at FROM bot_sessions WHERE telegram_id=?', [id]);
+      if (row && (Date.now() - new Date(row.updated_at).getTime()) < 12 * 60 * 60 * 1000) {
+        sessions.set(id, JSON.parse(row.data));
+      }
+    } catch (e) { console.warn('Session restore failed:', e.message); }
+  }
+  return next();
+});
 const userByTelegram = id => one('SELECT * FROM users WHERE telegram_id=?', [id]);
 const isAdmin = u => u && u.role === 'admin';
 const isTech = u => u && u.role === 'technician';
@@ -188,6 +304,18 @@ async function notifyAdmins(text) {
   for (const a of admins) { try { await bot.telegram.sendMessage(a.telegram_id,text); } catch(e) { console.warn('Admin notification failed:',e.message); } }
 }
 async function getRequestByNo(no) { return one('SELECT r.*,u.full_name AS employee_name,u.phone AS employee_phone,u.telegram_id AS employee_tg FROM requests r JOIN users u ON u.id=r.employee_id WHERE r.request_no=?',[no]); }
+// Request numbers are derived from the highest number issued today, so deleting a request
+// or two simultaneous submissions can never collide on the unique request_no column.
+async function nextRequestNo() {
+  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const prefix = `AMH-IT-${stamp}-`;
+  const row = await one('SELECT request_no FROM requests WHERE request_no LIKE ? ORDER BY request_no DESC LIMIT 1', [`${prefix}%`]);
+  const last = row ? Number.parseInt(String(row.request_no).slice(prefix.length), 10) : 0;
+  const next = (Number.isFinite(last) ? last : 0) + 1;
+  return `${prefix}${String(next).padStart(4, '0')}`;
+}
+const isDuplicateKey = err => err && (err.code === '23505' || err.code === 'ER_DUP_ENTRY' || err.errno === 1062);
+
 async function buildAndSendPdf(ctx, req, employee, tech = null) {
   const file = path.join(reportDir, `${req.request_no}.pdf`);
   await generateRequestPdf(req, employee, file, tech);
@@ -466,8 +594,9 @@ bot.action('main:report', async ctx => {
 });
 bot.action(/^cat:(\d+)$/, async ctx => {
   const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id);
-  if(s.flow!=='report') return sessionExpired(ctx);
+  if(s.flow!=='report' || s.step!=='category') return sessionExpired(ctx);
   const catIdx = Number(ctx.match[1]);
+  if(!Number.isInteger(catIdx) || !CATEGORIES[catIdx]) return sessionExpired(ctx);
   s.data.equipment_type = CATEGORIES[catIdx] || 'Other electronics';
   s.data.catIdx = catIdx;
   s.step = 'model';
@@ -479,25 +608,39 @@ bot.action(/^cat:(\d+)$/, async ctx => {
 bot.action(/^repmodel:(\d+):(\d+)$/, async ctx => {
   const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id);
   if(s.flow!=='report' || s.step!=='model') return sessionExpired(ctx);
+  // The session category is authoritative so a stale button can never switch the equipment type.
+  const sessionCat = reportCatIdx(s);
   const catIdx = Number(ctx.match[1]);
   const modelIdx = Number(ctx.match[2]);
-  const models = DEVICE_MODELS[catIdx] || DEVICE_MODELS[7];
-  s.data.model = models[modelIdx] || 'Standard';
+  const isAm = langOf(u) === 'am';
+  const models = DEVICE_MODELS[sessionCat] || DEVICE_MODELS[7];
+  if (catIdx !== sessionCat || !models[modelIdx]) {
+    await ctx.answerCbQuery();
+    return ctx.reply(isAm ? 'የመሣሪያውን ሞዴል ይምረጡ (ወይም ይጻፉ)፦' : 'Select device / model (or type it):', modelKeyboard(sessionCat, isAm));
+  }
+  s.data.model = models[modelIdx];
   s.data.equipment_name = s.data.equipment_type;
   s.data.serial_number = '-';
   s.step = 'problem';
   setSession(ctx.from.id, s);
   await ctx.answerCbQuery();
-  const isAm = langOf(u) === 'am';
-  return ctx.reply(isAm ? 'የብልሽቱን ዓይነት ይምረጡ (ወይም ይጻፉ)፦' : 'Select or describe the problem:', problemKeyboard(isAm));
+  return ctx.reply(problemPrompt(isAm, sessionCat), problemKeyboard(isAm, sessionCat));
 });
-bot.action(/^repprob:(\d+)$/, async ctx => {
+bot.action(/^repprob:(\d+):(\d+)$/, async ctx => {
   const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id);
   if(s.flow!=='report' || s.step!=='problem') return sessionExpired(ctx);
-  const probIdx = Number(ctx.match[1]);
+  const sessionCat = reportCatIdx(s);
+  const catIdx = Number(ctx.match[1]);
+  const probIdx = Number(ctx.match[2]);
   const isAm = langOf(u) === 'am';
-  const prob = COMMON_PROBLEMS[probIdx];
-  s.data.problem = isAm ? (prob?.am || 'ብልሽት') : (prob?.en || 'Failure');
+  const list = PROBLEMS_BY_CATEGORY[sessionCat] || PROBLEMS_BY_CATEGORY[7];
+  const prob = list[probIdx];
+  // Ignore buttons reused from an older report/category instead of saving a problem that belongs to another device.
+  if (catIdx !== sessionCat || !prob) {
+    await ctx.answerCbQuery();
+    return ctx.reply(problemPrompt(isAm, sessionCat), problemKeyboard(isAm, sessionCat));
+  }
+  s.data.problem = isAm ? prob.am : prob.en;
   s.step = 'location';
   setSession(ctx.from.id, s);
   await ctx.answerCbQuery();
@@ -586,13 +729,37 @@ bot.action('store:issue', async ctx => { const u=await userByTelegram(ctx.from.i
 bot.action('store:view', async ctx => { const u=await userByTelegram(ctx.from.id); if(!isStore(u)&&!isAdmin(u)) return ctx.answerCbQuery(); const rows=await query('SELECT item_name,quantity,unit FROM spare_parts ORDER BY item_name'); await ctx.answerCbQuery(); return ctx.reply(rows.length?rows.map(r=>`${r.item_name}: ${r.quantity} ${r.unit}`).join('\n'):'No spare parts recorded.'); });
 
 bot.action('report:submit', async ctx => {
-  const u=await userByTelegram(ctx.from.id); const s=getSession(ctx.from.id); if(s.flow!=='report'||s.step!=='confirm') return ctx.answerCbQuery('No report in progress.');
-  const d=s.data; const stamp=new Date().toISOString().slice(0,10).replace(/-/g,'');
-  const count=await one('SELECT COUNT(*) AS n FROM requests WHERE DATE(reported_at)=CURRENT_DATE'); const requestNo=`AMH-IT-${stamp}-${String(Number(count.n)+1).padStart(4,'0')}`;
-  const result=await query("INSERT INTO requests(request_no,employee_id,equipment_type,equipment_name,model,serial_number,department,room_location,problem_description,priority,attachment_file_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",[requestNo,u.id,d.equipment_type,d.equipment_name,d.model==='-'?null:d.model,d.serial_number==='-'?null:d.serial_number,u.department,d.room,d.problem,d.priority,d.photo||null]);
+  await ctx.answerCbQuery();
+  const u=await userByTelegram(ctx.from.id);
+  if(!u) return sessionExpired(ctx);
+  const s=getSession(ctx.from.id);
+  if(s.flow!=='report' || s.step!=='confirm') return sessionExpired(ctx);
+  const d=s.data||{};
+  if(!d.equipment_type || !d.problem || !d.priority || !d.room) {
+    clearSession(ctx.from.id);
+    return ctx.reply('⚠️ Your report draft was incomplete, so nothing was saved.\nሪፖርቱ ያልተሟላ ስለሆነ አልተቀመጠም።\n\nSend /report to start again.');
+  }
+  const department = u.department || d.department || 'Unspecified';
+  let requestNo=null, result=null, lastErr=null;
+  try {
+  for(let attempt=0; attempt<5 && !result; attempt++) {
+    requestNo = await nextRequestNo();
+    try {
+      result = await query("INSERT INTO requests(request_no,employee_id,equipment_type,equipment_name,model,serial_number,department,room_location,problem_description,priority,attachment_file_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",[requestNo,u.id,d.equipment_type,d.equipment_name,d.model==='-'?null:d.model,d.serial_number==='-'?null:d.serial_number,department,d.room,d.problem,d.priority,d.photo||null]);
+    } catch(err) {
+      if(!isDuplicateKey(err)) throw err;
+      lastErr = err;
+    }
+  }
+  if(!result) throw lastErr || new Error('Could not allocate a request number.');
   await query("INSERT INTO maintenance_activities(request_id,actor_user_id,activity_type,notes) VALUES(?,?,'submitted','Employee submitted failure report through Telegram.')",[result.insertId,u.id]); await audit(u,'submit_request','request',result.insertId,requestNo);
-  const assigned=await autoAssign(result.insertId,d.equipment_type); const r=await getRequestByNo(requestNo);
-  clearSession(ctx.from.id); await ctx.answerCbQuery('Submitted'); await ctx.reply(`${msg(u,'submitted')} ${requestNo}${assigned?`\nAssigned technician: ${assigned.full_name}`:''}`);
+  } catch(err) {
+    console.error('Report submit failed:', err);
+    return ctx.reply(`⚠️ Your report could not be saved: ${err.message}\nሪፖርቱን ማስቀመጥ አልተቻለም።\n\nPlease send /report and try again, or contact IT administration.`);
+  }
+  let assigned=null; try { assigned=await autoAssign(result.insertId,d.equipment_type); } catch(err) { console.error('Auto-assign failed:', err.message); }
+  const r=await getRequestByNo(requestNo);
+  clearSession(ctx.from.id); await ctx.reply(`${msg(u,'submitted')} ${requestNo}${assigned?`\nAssigned technician: ${assigned.full_name}`:''}`);
   if(assigned) { try { await bot.telegram.sendMessage(assigned.telegram_id,`${msg(u,'assigned')}\n${requestNo}\n${d.equipment_name} (${d.equipment_type})\nPriority: ${d.priority}\nLocation: ${d.room}`); if(d.photo) await bot.telegram.sendPhoto(assigned.telegram_id,d.photo,{caption:`Evidence for ${requestNo}`}); } catch(e){} }
   else await notifyAdmins(`UNASSIGNED REQUEST: ${requestNo}\n${d.equipment_name} (${d.equipment_type})\nNo matching available technician. Please review.`);
   await notifyAdmins(`New IT request ${requestNo} submitted. ${assigned?`Auto-assigned to ${assigned.full_name}.`:'Awaiting technician assignment.'}`);
@@ -627,7 +794,8 @@ bot.on('text', async ctx => {
       s.data.model=text; s.data.equipment_name=s.data.equipment_type; s.data.serial_number='-';
       s.step='problem'; setSession(tg,s);
       const isAm = langOf(u) === 'am';
-      return ctx.reply(isAm ? 'የብልሽቱን ዓይነት ይምረጡ (ወይም ይጻፉ)፦' : 'Select or describe the problem:', problemKeyboard(isAm));
+      const catIdx = reportCatIdx(s);
+      return ctx.reply(problemPrompt(isAm, catIdx), problemKeyboard(isAm, catIdx));
     }
     // typed fallback for problem step
     if(s.step==='problem') {
