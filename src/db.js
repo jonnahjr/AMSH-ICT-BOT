@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-const fallbackDb = Buffer.from('cG9zdGdyZXNxbDovL3Bvc3RncmVzOkpvbm5haGpuciU0MDA5NDU2MjgwNzVAZGIubG9neXJ1dGx3cnp2enBob2trZ3Euc3VwYWJhc2UuY286NTQzMi9wb3N0Z3Jlcw==', 'base64').toString();
+const fallbackDb = Buffer.from('cG9zdGdyZXNxbDovL3Bvc3RncmVzLmxvZ3lydXRsd3J6dnpwaG9ra2dxOkpvbm5haGpuciU0MDA5NDU2MjgwNzVAYXdzLTEtZXUtd2VzdC0xLnBvb2xlci5zdXBhYmFzZS5jb206NTQzMi9wb3N0Z3Jlcw==', 'base64').toString();
 const dbUrl = process.env.DATABASE_URL || fallbackDb;
 const isPg = Boolean(dbUrl);
 
