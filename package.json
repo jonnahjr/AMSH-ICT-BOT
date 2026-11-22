@@ -1,0 +1,24 @@
+{
+  "name": "amanuel-hospital-it-support-bot",
+  "version": "1.0.0",
+  "description": "Bilingual Telegram-only IT equipment failure and maintenance management bot for Amanuel Mental Specialized Hospital",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "node --watch app.js",
+    "db:init": "node src/init-db.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@supabase/server": "^1.9.2",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.119.2",
+    "dotenv": "^16.4.7",
+    "mysql2": "^3.12.0",
+    "pdfkit": "^0.16.0",
+    "pg": "^8.23.1",
+    "telegraf": "^4.16.3"
+  }
+}
