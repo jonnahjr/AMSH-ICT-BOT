@@ -211,10 +211,11 @@ const msg = (u, key) => t(langOf(u), key);
 const safe = v => String(v || '-').replace(/[<>]/g, '');
 
 function mainKeyboard(u) {
+  const isAm = langOf(u) === 'am';
   const rows = [
     [Markup.button.callback(msg(u, 'menuReport'), 'main:report')],
     [Markup.button.callback(msg(u, 'menuMine'), 'main:mine'), Markup.button.callback(msg(u, 'menuTrack'), 'main:track')],
-    [Markup.button.callback(msg(u, 'menuLanguage'), 'main:lang')]
+    [Markup.button.callback(isAm ? '👤 መገለጫዬ / Profile' : '👤 My Profile', 'main:profile'), Markup.button.callback(msg(u, 'menuLanguage'), 'main:lang')]
   ];
   if (isTech(u)) rows.push([Markup.button.callback('🧰 Technician jobs / የቴክኒሻን ሥራዎች', 'main:tech')]);
   if (isAdmin(u)) rows.push([Markup.button.callback('⚙️ Admin / አስተዳደር', 'main:admin')]);
@@ -591,13 +592,15 @@ bot.command('myjobs', async ctx => {
 
 function sendAdminMenu(ctx, u) {
   return ctx.reply(
-    '⚙️ *Administrator Control Panel*\nFull access to requests, applicant profiles, technicians, photos & PDFs:',
+    '⚙️ *Administrator Control Panel*\nFull access to requests, applicant profiles, search, broadcast, CSV export, photos & PDFs:',
     {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard([
         [Markup.button.callback(`📌 ${msg(u, 'adminPending')}`, 'admin:pending'), Markup.button.callback('📋 Recent Requests', 'admin:recent')],
-        [Markup.button.callback('👥 Users & Applicants', 'admin:users'), Markup.button.callback('📊 System Stats', 'admin:stats')],
-        [Markup.button.callback(`👷 ${msg(u, 'adminTechs')}`, 'admin:workload'), Markup.button.callback('📦 Store / Parts', 'main:store')]
+        [Markup.button.callback('🔎 Search Request', 'admin:search'), Markup.button.callback('👥 Users & Applicants', 'admin:users')],
+        [Markup.button.callback('📊 System Stats', 'admin:stats'), Markup.button.callback(`👷 ${msg(u, 'adminTechs')}`, 'admin:workload')],
+        [Markup.button.callback('📢 Broadcast Notice', 'admin:broadcast'), Markup.button.callback('📥 Export CSV', 'admin:export')],
+        [Markup.button.callback('📦 Store / Parts', 'main:store')]
       ])
     }
   );
@@ -788,12 +791,50 @@ bot.action('repphoto:skip', async ctx => {
   await ctx.answerCbQuery('Photo skipped');
   return showReportConfirm(ctx, u, s);
 });
+function userTrackActions(r, isAm) {
+  const row = [Markup.button.callback(isAm ? '📄 PDF አውርድ' : '📄 Download PDF', `user:pdf:${r.request_no}`)];
+  if (r.status === 'pending') {
+    row.push(Markup.button.callback(isAm ? '❌ ጥያቄ ሰርዝ' : '❌ Cancel Request', `user:cancel:${r.request_no}`));
+  }
+  return Markup.inlineKeyboard([row]);
+}
+
+bot.action('main:profile', async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  await ctx.answerCbQuery();
+  if (!u) return ctx.reply('Send /start first.');
+  await syncTelegramUsername(ctx, u);
+  const isAm = langOf(u) === 'am';
+  const txt = isAm
+    ? `👤 *የእኔ መገለጫ*\n━━━━━━━━━━━━━━━━━━\n• ስም: ${u.full_name}\n• Username: ${u.telegram_username || '-'}\n• ስልክ: ${u.phone || '-'}\n• ኢሜይል: ${u.email || '-'}\n• ክፍል: ${u.department || '-'}\n• ሚና: ${u.role}\n• Telegram ID: \`${u.telegram_id}\``
+    : `👤 *My Profile*\n━━━━━━━━━━━━━━━━━━\n• Name: ${u.full_name}\n• Username: ${u.telegram_username || '-'}\n• Phone: ${u.phone || '-'}\n• Email: ${u.email || '-'}\n• Department: ${u.department || '-'}\n• Role: ${u.role}\n• Telegram ID: \`${u.telegram_id}\``;
+  return ctx.reply(txt, {
+    parse_mode: 'Markdown',
+    ...Markup.inlineKeyboard([[Markup.button.callback(isAm ? '✏️ መረጃ አዘምን / Update' : '✏️ Update Profile', 'profile:edit')]])
+  });
+});
+
+bot.action('profile:edit', async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  await ctx.answerCbQuery();
+  const lang = langOf(u);
+  clearSession(ctx.from.id);
+  setSession(ctx.from.id, { flow: 'register', step: 'name', data: { language: lang } });
+  return ctx.reply(t(lang, 'registerName'));
+});
+
 bot.action('main:mine', async ctx => {
   const u = await userByTelegram(ctx.from.id); await ctx.answerCbQuery(); if (!u) return;
-  const rows = await query('SELECT request_no,equipment_name,status,priority,reported_at FROM requests WHERE employee_id=? ORDER BY id DESC LIMIT 10', [u.id]);
+  const rows = await query('SELECT request_no,equipment_name,status,priority FROM requests WHERE employee_id=? ORDER BY id DESC LIMIT 10', [u.id]);
   if (!rows.length) return ctx.reply(msg(u, 'noRequests'));
-  let text = msg(u, 'myJobs') + '\n\n' + rows.map(r => `${r.request_no} | ${r.equipment_name}\n${STATUS_LABEL[r.status]} • ${r.priority}`).join('\n\n');
-  return ctx.reply(text);
+  const isAm = langOf(u) === 'am';
+  const buttons = rows.map(r => [
+    Markup.button.callback(`${r.request_no} • ${r.equipment_name} (${STATUS_LABEL[r.status] || r.status})`, `trackpick:${r.request_no}`)
+  ]);
+  return ctx.reply(isAm ? '📋 *የእኔ ጥያቄዎች* — ዝርዝር ለማየት ይንኩ፦' : '📋 *My Requests* — tap any request to view details or PDF:', {
+    parse_mode: 'Markdown',
+    ...Markup.inlineKeyboard(buttons)
+  });
 });
 bot.action('main:track', async ctx => {
   const u = await userByTelegram(ctx.from.id);
@@ -808,7 +849,31 @@ bot.action(/^trackpick:(.+)$/, async ctx => {
   clearSession(ctx.from.id);
   const r = await getRequestByNo(ctx.match[1]);
   if (!r || r.employee_id !== u.id) return ctx.reply('Request not found, or it does not belong to your account.');
-  return ctx.reply(await formatTrackReply(r, langOf(u) === 'am'));
+  const isAm = langOf(u) === 'am';
+  return ctx.reply(await formatTrackReply(r, isAm), userTrackActions(r, isAm));
+});
+bot.action(/^user:pdf:(.+)$/, async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  await ctx.answerCbQuery();
+  if (!u) return;
+  const r = await getRequestByNo(ctx.match[1]);
+  if (!r || r.employee_id !== u.id) return ctx.reply('Request not found.');
+  const tech = r.assigned_technician_id ? await one('SELECT * FROM users WHERE id=?', [r.assigned_technician_id]) : null;
+  const file = path.join(reportDir, `${r.request_no}-user.pdf`);
+  await generateRequestPdf(r, u, file, tech);
+  return ctx.replyWithDocument({ source: file, filename: `${r.request_no}.pdf` });
+});
+bot.action(/^user:cancel:(.+)$/, async ctx => {
+  const u = await userByTelegram(ctx.from.id);
+  const r = await getRequestByNo(ctx.match[1]);
+  if (!u || !r || r.employee_id !== u.id) return ctx.answerCbQuery('Not allowed.');
+  if (r.status !== 'pending') return ctx.answerCbQuery('Only pending requests can be cancelled.');
+  await query("UPDATE requests SET status='cancelled' WHERE id=?", [r.id]);
+  await query("INSERT INTO maintenance_activities(request_id,actor_user_id,activity_type,notes) VALUES(?,?,'cancelled','Cancelled by employee')", [r.id, u.id]);
+  await audit(u, 'user_cancel', 'request', r.id, r.request_no);
+  await ctx.answerCbQuery('Cancelled');
+  const isAm = langOf(u) === 'am';
+  return ctx.reply(isAm ? `❌ ${r.request_no} ተሰርዟል።` : `❌ Request ${r.request_no} has been cancelled.`);
 });
 
 bot.action('main:tech', async ctx => {
@@ -819,8 +884,11 @@ bot.action('main:tech', async ctx => {
 });
 bot.action(/^techopen:(.+)$/, async ctx => {
   const u = await userByTelegram(ctx.from.id); if (!isTech(u)) return ctx.answerCbQuery(); const r = await getRequestByNo(ctx.match[1]); if (!r || r.assigned_technician_id !== u.id) return ctx.answerCbQuery('Not assigned to you.');
-  await ctx.answerCbQuery(); const employee = await one('SELECT full_name,phone FROM users WHERE id=?', [r.employee_id]);
-  const txt = `${r.request_no}\nEquipment: ${r.equipment_name} (${r.equipment_type})\nModel: ${r.model || '-'}\nSerial: ${r.serial_number || '-'}\nDepartment: ${r.department}\nLocation: ${r.room_location}\nProblem: ${r.problem_description}\nEmployee: ${employee.full_name} (${employee.phone || '-'})\nStatus: ${STATUS_LABEL[r.status]}`;
+  await ctx.answerCbQuery();
+  const txt = `${r.request_no}\n🔧 Equipment: ${r.equipment_name} (${r.equipment_type})\n📱 Model: ${r.model || '-'}\n❗ Problem: ${r.problem_description}\n📍 Dept/Location: ${r.department} / ${r.room_location || '-'}\n\n👤 Applicant: ${r.employee_name}\n• Username: ${r.employee_username || '-'}\n• Phone: ${r.employee_phone || '-'}\n📊 Status: ${STATUS_LABEL[r.status]}`;
+  if (r.attachment_file_id) {
+    try { await ctx.replyWithPhoto(r.attachment_file_id, { caption: `📸 Photo for ${r.request_no}` }); } catch (e) {}
+  }
   return ctx.reply(txt, Markup.inlineKeyboard([
     [Markup.button.callback('Accept / ተቀበል', 'techstatus:accepted:' + r.request_no), Markup.button.callback('Start work / ጀምር', 'techstatus:in_progress:' + r.request_no)],
     [Markup.button.callback('Diagnosis / ምርመራ', 'techdiag:' + r.request_no), Markup.button.callback('Complete / አጠናቅቅ', 'techfinish:' + r.request_no)],
@@ -1033,6 +1101,61 @@ bot.action('admin:stats', async ctx => {
 });
 bot.action('admin:workload', async ctx => { const u = await userByTelegram(ctx.from.id); if (!isAdmin(u)) return ctx.answerCbQuery(); const rows = await query("SELECT u.full_name,u.specialization,COUNT(r.id) AS jobs FROM users u LEFT JOIN requests r ON r.assigned_technician_id=u.id AND r.status IN ('assigned','accepted','in_progress','waiting_parts') WHERE u.role='technician' AND u.is_active=TRUE GROUP BY u.id ORDER BY jobs"); await ctx.answerCbQuery(); return ctx.reply(rows.length ? rows.map(r => `${r.full_name} (${r.specialization || 'Unspecified'}): ${r.jobs} open jobs`).join('\n') : 'No active technicians.'); });
 
+bot.action('admin:search', async ctx => {
+  const u = await userByTelegram(ctx.from.id); if (!isAdmin(u)) return ctx.answerCbQuery();
+  setSession(ctx.from.id, { flow: 'adminsearch', step: 'query', data: {} });
+  await ctx.answerCbQuery();
+  return ctx.reply('🔎 Enter request number, employee name, phone, or equipment to search (or /cancel):');
+});
+
+bot.action('admin:broadcast', async ctx => {
+  const u = await userByTelegram(ctx.from.id); if (!isAdmin(u)) return ctx.answerCbQuery();
+  await ctx.answerCbQuery();
+  return ctx.reply('📢 Select broadcast audience:', Markup.inlineKeyboard([
+    [Markup.button.callback('👥 All Active Users', 'admin:bcasttarget:all')],
+    [Markup.button.callback('🔧 Technicians Only', 'admin:bcasttarget:techs')]
+  ]));
+});
+
+bot.action(/^admin:bcasttarget:(all|techs)$/, async ctx => {
+  const u = await userByTelegram(ctx.from.id); if (!isAdmin(u)) return ctx.answerCbQuery();
+  setSession(ctx.from.id, { flow: 'adminbroadcast', step: 'message', data: { target: ctx.match[1] } });
+  await ctx.answerCbQuery();
+  return ctx.reply(`📢 Type the announcement to send to ${ctx.match[1] === 'techs' ? 'all active technicians' : 'all active users'} (or /cancel):`);
+});
+
+bot.action('admin:export', async ctx => {
+  const u = await userByTelegram(ctx.from.id); if (!isAdmin(u)) return ctx.answerCbQuery();
+  await ctx.answerCbQuery('Generating CSV...');
+  const rows = await query(`
+    SELECT r.request_no, r.reported_at, r.status, r.priority, r.equipment_type, r.model,
+           r.problem_description, r.department, r.room_location,
+           u.full_name AS applicant_name, u.telegram_username, u.phone, u.email, u.telegram_id,
+           t.full_name AS technician_name, r.diagnosis, r.parts_used
+    FROM requests r
+    JOIN users u ON u.id=r.employee_id
+    LEFT JOIN users t ON t.id=r.assigned_technician_id
+    ORDER BY r.id DESC
+    LIMIT 500
+  `);
+  const csvEsc = v => `"${String(v ?? '').replace(/"/g, '""').replace(/\r?\n/g, ' ')}"`;
+  const headers = ['Request No', 'Reported At', 'Status', 'Priority', 'Equipment', 'Model', 'Problem', 'Department', 'Location', 'Applicant Name', 'Username', 'Phone', 'Email', 'Telegram ID', 'Technician', 'Diagnosis', 'Parts Used'];
+  const lines = [headers.map(csvEsc).join(',')];
+  for (const r of rows) {
+    lines.push([
+      r.request_no, r.reported_at, r.status, r.priority, r.equipment_type, r.model,
+      r.problem_description, r.department, r.room_location,
+      r.applicant_name, r.telegram_username, r.phone, r.email, r.telegram_id,
+      r.technician_name, r.diagnosis, r.parts_used
+    ].map(csvEsc).join(','));
+  }
+  const stamp = new Date().toISOString().slice(0, 10);
+  const csvPath = path.join(reportDir, `AMSH-IT-Export-${stamp}.csv`);
+  fs.writeFileSync(csvPath, lines.join('\n'), 'utf8');
+  await audit(u, 'admin_export_csv', 'request', null, `${rows.length} rows`);
+  return ctx.replyWithDocument({ source: csvPath, filename: `AMSH-IT-Export-${stamp}.csv` }, { caption: `📥 Exported ${rows.length} IT requests.` });
+});
+
 bot.action('main:store', async ctx => { const u = await userByTelegram(ctx.from.id); await ctx.answerCbQuery(); if (!isStore(u) && !isAdmin(u)) return ctx.reply(msg(u, 'storeOnly')); return ctx.reply(msg(u, 'storeMenu'), Markup.inlineKeyboard([[Markup.button.callback(msg(u, 'storeAdd'), 'store:add')], [Markup.button.callback(msg(u, 'storeIssue'), 'store:issue')], [Markup.button.callback(msg(u, 'storeView'), 'store:view')]])); });
 bot.action('store:add', async ctx => { const u = await userByTelegram(ctx.from.id); if (!isStore(u) && !isAdmin(u)) return ctx.answerCbQuery(); setSession(ctx.from.id, { flow: 'stockadd', step: 'part', data: {} }); await ctx.answerCbQuery(); return ctx.reply(msg(u, 'askPart')); });
 bot.action('store:issue', async ctx => { const u = await userByTelegram(ctx.from.id); if (!isStore(u) && !isAdmin(u)) return ctx.answerCbQuery(); setSession(ctx.from.id, { flow: 'stockissue', step: 'part', data: {} }); await ctx.answerCbQuery(); return ctx.reply(msg(u, 'askPart')); });
@@ -1194,6 +1317,43 @@ bot.on('text', async ctx => {
       let reqId = null; if (text !== '-') { const r = await getRequestByNo(text.toUpperCase()); if (!r) return ctx.reply('Request number not found. Enter a valid number or -'); reqId = r.id; }
       await query('UPDATE spare_parts SET quantity=quantity-? WHERE id=?', [s.data.qty, p.id]); await query("INSERT INTO spare_transactions(part_id,request_id,actor_user_id,transaction_type,quantity,notes) VALUES(?,?,?,'issued',?,?)", [p.id, reqId, u.id, s.data.qty, `Issued by ${u.full_name}`]); await audit(u, 'stock_issued', 'spare_part', p.id, `${s.data.qty} ${p.unit}; request ${text}`); clearSession(tg); return ctx.reply(msg(u, 'issued'));
     }
+  }
+  if (s.flow === 'adminsearch' && s.step === 'query' && isAdmin(u)) {
+    clearSession(tg);
+    const q = `%${text}%`;
+    const rows = await query(
+      `SELECT r.request_no,r.equipment_name,r.status,u.full_name AS emp_name
+       FROM requests r JOIN users u ON u.id=r.employee_id
+       WHERE LOWER(r.request_no) LIKE LOWER(?)
+          OR LOWER(u.full_name) LIKE LOWER(?)
+          OR LOWER(COALESCE(u.phone,'')) LIKE LOWER(?)
+          OR LOWER(r.equipment_name) LIKE LOWER(?)
+          OR LOWER(COALESCE(r.model,'')) LIKE LOWER(?)
+       ORDER BY r.id DESC LIMIT 12`,
+      [q, q, q, q, q]
+    );
+    if (!rows.length) return ctx.reply('No matching requests found.');
+    const buttons = rows.map(r => [
+      Markup.button.callback(`${r.request_no} • ${r.emp_name} (${STATUS_LABEL[r.status] || r.status})`, `admin:view:${r.request_no}`)
+    ]);
+    return ctx.reply(`🔎 Found ${rows.length} matching request(s):`, Markup.inlineKeyboard(buttons));
+  }
+  if (s.flow === 'adminbroadcast' && s.step === 'message' && isAdmin(u)) {
+    const target = s.data.target;
+    clearSession(tg);
+    const sql = target === 'techs'
+      ? "SELECT telegram_id FROM users WHERE role='technician' AND is_active=TRUE"
+      : 'SELECT telegram_id FROM users WHERE is_active=TRUE';
+    const recipients = await query(sql);
+    let sent = 0;
+    for (const rec of recipients) {
+      try {
+        await bot.telegram.sendMessage(rec.telegram_id, `📢 *IT Support Announcement*\n\n${text}`, { parse_mode: 'Markdown' });
+        sent++;
+      } catch (e) {}
+    }
+    await audit(u, 'admin_broadcast', 'user', null, `${target}:${sent}`);
+    return ctx.reply(`✅ Broadcast sent to ${sent}/${recipients.length} users.`);
   }
 });
 
