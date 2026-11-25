@@ -515,22 +515,72 @@ bot.command('report', async ctx => {
   return ctx.reply(isAm ? 'የመሣሪያውን ዓይነት ይምረጡ፦' : 'Select equipment category:', categoryKeyboard(isAm));
 });
 
+// Helper: shared track/status prompt with clickable recent requests + typed fallback
+async function startTrackFlow(ctx, u) {
+  clearSession(ctx.from.id);
+  setSession(ctx.from.id, { flow: 'track', step: 'number' });
+  const isAm = langOf(u) === 'am';
+  const recent = await query(
+    'SELECT request_no, equipment_name, status FROM requests WHERE employee_id=? ORDER BY id DESC LIMIT 6',
+    [u.id]
+  );
+  if (recent.length) {
+    const buttons = recent.map(r => [
+      Markup.button.callback(`${r.request_no} (${r.equipment_name})`, `trackpick:${r.request_no}`)
+    ]);
+    return ctx.reply(
+      isAm
+        ? '🔍 ከዚህ በታች ያሉትን ጥያቄዎች ይምረጡ (ወይም የጥያቄ ቁጥር ይጻፉ)፦'
+        : '🔍 Tap a request below to check its status (or type a request number):',
+      Markup.inlineKeyboard(buttons)
+    );
+  }
+  return ctx.reply(
+    isAm
+      ? '🔍 የጥያቄ ቁጥርዎን ያስገቡ (ለምሳሌ AMH-IT-20261125-0001)፦'
+      : '🔍 Enter your request number (e.g. AMH-IT-20261125-0001):'
+  );
+}
+
+async function formatTrackReply(r, isAm) {
+  let techName = null;
+  if (r.assigned_technician_id) {
+    const tech = await one('SELECT full_name FROM users WHERE id=?', [r.assigned_technician_id]);
+    techName = tech?.full_name || null;
+  }
+  const statusText = STATUS_LABEL[r.status] || r.status;
+  if (isAm) {
+    return (
+      `📋 ${r.request_no}\n` +
+      `🔧 መሣሪያ: ${r.equipment_name}${r.model ? ` (${r.model})` : ''}\n` +
+      `📍 ቦታ: ${r.room_location || '-'}\n` +
+      `📊 ሁኔታ: ${statusText}\n` +
+      `⚡ ቅድሚያ: ${r.priority}\n` +
+      (techName ? `👨‍🔧 ቴክኒሺያን: ${techName}\n` : '') +
+      `🕒 የተላከበት: ${r.reported_at}`
+    );
+  }
+  return (
+    `📋 ${r.request_no}\n` +
+    `🔧 Equipment: ${r.equipment_name}${r.model ? ` (${r.model})` : ''}\n` +
+    `📍 Location: ${r.room_location || '-'}\n` +
+    `📊 Status: ${statusText}\n` +
+    `⚡ Priority: ${r.priority}\n` +
+    (techName ? `👨‍🔧 Technician: ${techName}\n` : '') +
+    `🕒 Reported: ${r.reported_at}`
+  );
+}
+
 // /status or /track — track a request
 bot.command('status', async ctx => {
   const u = await userByTelegram(ctx.from.id);
   if (!u) return ctx.reply('Please send /start first.');
-  clearSession(ctx.from.id);
-  setSession(ctx.from.id, { flow: 'track', step: 'number' });
-  const isAm = langOf(u) === 'am';
-  return ctx.reply(isAm ? '🔍 የጥያቄ ቁጥርዎን ያስገቡ (ለምሳሌ AMH-IT-20261122-0001)፦' : '🔍 Enter your request number (e.g. AMH-IT-20261122-0001):');
+  return startTrackFlow(ctx, u);
 });
 bot.command('track', async ctx => {
   const u = await userByTelegram(ctx.from.id);
   if (!u) return ctx.reply('Please send /start first.');
-  clearSession(ctx.from.id);
-  setSession(ctx.from.id, { flow: 'track', step: 'number' });
-  const isAm = langOf(u) === 'am';
-  return ctx.reply(isAm ? '🔍 የጥያቄ ቁጥርዎን ያስገቡ፦' : '🔍 Enter your request number:');
+  return startTrackFlow(ctx, u);
 });
 
 // /mytickets — list user's own requests
@@ -821,7 +871,21 @@ bot.action('main:mine', async ctx => {
   let text=msg(u,'myJobs')+'\n\n'+rows.map(r=>`${r.request_no} | ${r.equipment_name}\n${STATUS_LABEL[r.status]} • ${r.priority}`).join('\n\n');
   return ctx.reply(text);
 });
-bot.action('main:track', async ctx => { const u=await userByTelegram(ctx.from.id); await ctx.answerCbQuery(); setSession(ctx.from.id,{flow:'track',step:'number'}); return ctx.reply(langOf(u)==='am'?'የጥያቄ ቁጥርዎን ያስገቡ (ለምሳሌ AMH-IT-20261119-0001)፦':'Enter your request number (e.g. AMH-IT-20261119-0001):'); });
+bot.action('main:track', async ctx => {
+  const u=await userByTelegram(ctx.from.id);
+  await ctx.answerCbQuery();
+  if(!u) return ctx.reply('Send /start first.');
+  return startTrackFlow(ctx, u);
+});
+bot.action(/^trackpick:(.+)$/, async ctx => {
+  const u=await userByTelegram(ctx.from.id);
+  await ctx.answerCbQuery();
+  if(!u) return;
+  clearSession(ctx.from.id);
+  const r = await getRequestByNo(ctx.match[1]);
+  if(!r || r.employee_id !== u.id) return ctx.reply('Request not found, or it does not belong to your account.');
+  return ctx.reply(await formatTrackReply(r, langOf(u) === 'am'));
+});
 
 bot.action('main:tech', async ctx => { const u=await userByTelegram(ctx.from.id); await ctx.answerCbQuery(); if(!isTech(u)) return ctx.reply(msg(u,'techOnly'));
   const rows=await query("SELECT request_no,equipment_name,equipment_type,status,priority FROM requests WHERE assigned_technician_id=? AND status IN ('assigned','accepted','in_progress','waiting_parts') ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END,reported_at ASC LIMIT 15",[u.id]);
@@ -956,7 +1020,26 @@ bot.on('text', async ctx => {
     }
     if(s.step==='photo' && text.toUpperCase()==='SKIP') { s.step='confirm'; setSession(tg,s); return showReportConfirm(ctx,u,s); }
   }
-  if(s.flow==='track'&&s.step==='number') { const r=await getRequestByNo(text.toUpperCase()); clearSession(tg); if(!r||r.employee_id!==u.id) return ctx.reply('Request not found, or it does not belong to your account.'); return ctx.reply(`${r.request_no}\n${r.equipment_name}\nStatus: ${STATUS_LABEL[r.status]}\nPriority: ${r.priority}\nReported: ${r.reported_at}`); }
+  if(s.flow==='track'&&s.step==='number') {
+    const raw = text.toUpperCase();
+    let r = await getRequestByNo(raw);
+    if (!r && !raw.startsWith('AMH-')) {
+      r = await getRequestByNo(`AMH-${raw}`) || await getRequestByNo(`AMH-IT-${raw}`);
+    }
+    if (!r) {
+      const match = await one(
+        'SELECT request_no FROM requests WHERE employee_id=? AND request_no LIKE ? ORDER BY id DESC LIMIT 1',
+        [u.id, `%${raw}`]
+      );
+      if (match) r = await getRequestByNo(match.request_no);
+    }
+    clearSession(tg);
+    if(!r||r.employee_id!==u.id) {
+      const isAm = langOf(u) === 'am';
+      return ctx.reply(isAm ? 'ጥያቄው አልተገኘም ወይም የእርስዎ አይደለም።' : 'Request not found, or it does not belong to your account.');
+    }
+    return ctx.reply(await formatTrackReply(r, langOf(u) === 'am'));
+  }
   if(s.flow==='techupdate') {
     const r=await getRequestByNo(s.requestNo); if(!r||r.assigned_technician_id!==u.id) { clearSession(tg); return ctx.reply('Request not assigned to you.'); }
     if(s.step==='diagnosis') { s.data.diagnosis=text; s.step='repair'; setSession(tg,s); return ctx.reply(msg(u,'repair')); }
