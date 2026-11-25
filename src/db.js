@@ -88,9 +88,11 @@ async function initTablesIfMissing() {
       specialization VARCHAR(120) NULL,
       is_active BOOLEAN NOT NULL DEFAULT TRUE,
       language VARCHAR(10) NOT NULL DEFAULT 'en',
+      telegram_username VARCHAR(100) NULL,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_username VARCHAR(100) NULL;
 
     CREATE TABLE IF NOT EXISTS requests (
       id BIGSERIAL PRIMARY KEY,
